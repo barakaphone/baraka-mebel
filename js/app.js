@@ -11,7 +11,7 @@ import { renderSettings } from './sozlamalar.js';
 import { renderStaff, renderBranches, createStaffAccount } from './xodimlar.js';
 import { downloadPdf, downloadFinalPdf } from './pdf.js';
 import { renderReport } from './hisobot.js';
-import { renderTopics, unreadTopics } from './muammolar.js';
+import { mountChat } from './muammolar.js';
 import { DEFAULT_ROLES, mergeRoles, can as canP } from './perms.js';
 import { HUDUDLAR, VILOYATLAR, fullAddress } from './hududlar.js';
 import { installApp, canInstall } from './install.js';
@@ -141,7 +141,8 @@ async function boot() {
         $('#meRole').textContent = (isOwner() ? 'Tizim egasi' : roleName(p.role)) + (p.branchId && !isAdmin() ? ' · ' + branchName(p.branchId) : '');
         subscribeOrders();
         subscribeTopics();
-        S.tab = tabsFor()[0]?.id || 'muammo';
+        mountChat(ctx);
+        S.tab = tabsFor()[0]?.id || 'dash';
         go(S.tab);
       } catch (e) { console.error(e); show('login'); loginError(errText(e)); }
     });
@@ -240,7 +241,7 @@ function subscribeTopics() {
   S.unsub.push(onSnapshot(collection(db, 'topics'), snap => {
     S.topics = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
     renderTabs();
-    if (S.tab === 'muammo' && S.onTopics) S.onTopics();
+    S.onTopicsChat && S.onTopicsChat();
   }, () => { /* ruxsat yo'q */ }));
 }
 
@@ -262,7 +263,6 @@ function tabsFor() {
   if (!seesOrders && (can('skoring') || can('olchov') || can('work'))) t.push({ id: 'history', t: 'Bajarilgan' });
   if (can('calc')) t.push({ id: 'calc', t: 'Kalkulyator' });
   if (isAdmin() || can('report')) t.push({ id: 'report', t: 'Hisobot' });
-  t.push({ id: 'muammo', t: '💬 Muammolar', n: unreadTopics(ctx) });
   if (isAdmin() || can('add_usta') || can('staff_view')) t.push({ id: 'staff', t: isAdmin() || can('staff_view') ? 'Xodimlar' : 'Ustalar' });
   if (isAdmin()) t.push({ id: 'branches', t: 'Filiallar' });
   if (isAdmin() || can('xom_narx')) t.push({ id: 'settings', t: isAdmin() ? 'Sozlamalar' : 'Xom ashyo narxlari' });
@@ -283,10 +283,7 @@ $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-ta
 
 function go(tab, soft) {
   if (!S.me) return;
-  document.body.classList.remove('tg-open');
-  document.documentElement.style.setProperty('--hdr', ($('.bar')?.offsetHeight || 128) + 'px');
   if (!soft) S.view = null;
-  S.onTopics = null;
   renderTabs();
   const page = $('#page');
   if (!S.ordersReady && LIVE_TABS.includes(tab)) { page.innerHTML = '<div class="loading">Yuklanmoqda…</div>'; return; }
@@ -302,7 +299,6 @@ function go(tab, soft) {
     case 'history': return renderOrderList(page, { title: 'Bajarilgan ishlar', only: o => !(o.stage === 'skoring' && can('skoring')) && !(o.stage === 'olchov' && o.olchovchiId === S.me.id) && !(work.includes(o.stage) && o.ustaId === S.me.id) });
     case 'calc': return renderCalcPage(page);
     case 'report': return renderReport(page, ctx);
-    case 'muammo': return renderTopics(page, ctx);
     case 'staff': return renderStaff(page, ctx);
     case 'branches': return renderBranches(page, ctx);
     case 'settings': return renderSettings(page, ctx);

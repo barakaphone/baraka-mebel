@@ -57,8 +57,8 @@ for (const [size, w, h] of SIZES) {
   await p.click('[data-open]'); await p.waitForSelector('#back'); await check(p, size, 'kartochka', shot);
   await tab(p, 'calc'); await p.check('[data-sec="Buyurtma!B11"]'); await p.check('[data-sec="Buyurtma!B13"]'); await check(p, size, 'kalkulyator', shot);
   await tab(p, 'report'); await p.waitForSelector('#rpP'); await check(p, size, 'hisobot', shot);
-  await tab(p, 'muammo'); await check(p, size, 'muammolar', false);
-  await p.click('[data-t]'); await p.waitForSelector('#rf'); await check(p, size, 'muammo-ichi', shot);
+  await p.click('#cwFab'); await check(p, size, 'muammolar', shot);
+  await p.click('[data-t]'); await p.waitForSelector('#cwForm'); await check(p, size, 'muammo-ichi', shot); await p.click('[data-min]');
   await tab(p, 'staff'); await check(p, size, 'xodimlar', shot);
   await p.click('[data-ed]'); await p.waitForSelector('#sf'); await check(p, size, 'xodim-forma', false); await p.click('.mclose');
   await tab(p, 'branches'); await check(p, size, 'filiallar', false);

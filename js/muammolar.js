@@ -1,208 +1,249 @@
-// Muammolar: har bir muammo alohida mavzu, ko'rinishi Telegram chatlariga o'xshash
+// Muammolar: har bir sahifada pastki o'ng burchakdagi suzuvchi chat oynasi.
+// Har bir muammo — alohida suhbat (topics/{id}), xabarlar — topics/{id}/msgs.
 import { doc, collection, setDoc, updateDoc, deleteDoc, onSnapshot, increment } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import { esc, toast, errText, modal, confirmBox, compressImage } from './util.js';
-
-let tab = 'open';
-let unsubMsgs = null;
 
 // O'qilmagan: mavzuni o'zi ochgan yoki admin — va oxirgi xabarni boshqa odam yozgan
 export function unreadTopics(ctx) {
   const { S } = ctx;
   if (!S.me) return 0;
-  const seen = S.me.seen || {};
   const admin = S.me.role === 'admin';
-  return S.topics.filter(t => (t.by === S.me.id || admin) && t.lastBy !== S.me.id && (t.lastAt || 0) > (seen[t.id] || 0)).length;
+  return S.topics.filter(t => (t.by === S.me.id || admin) && isUnread(ctx, t)).length;
 }
 const isUnread = (ctx, t) => t.lastBy !== ctx.S.me.id && (t.lastAt || 0) > ((ctx.S.me.seen || {})[t.id] || 0);
 
-// Telegram uslubidagi yordamchilar
-const COLORS = ['#E17076', '#7BC862', '#E5A64E', '#65AADD', '#A695E7', '#EE7AAE', '#6EC9CB', '#FAA774'];
+const COLORS = ['#E17076', '#4FAE4E', '#E5A64E', '#3D8BD9', '#8E78E0', '#E56BA3', '#3FB3B5', '#F08A4B'];
 const colorOf = s => { let h = 0; for (const ch of String(s || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return COLORS[h % COLORS.length]; };
 const initials = n => String(n || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || '?';
-const avatar = (name, key, size = 46) => `<span class="tg-av" style="width:${size}px;height:${size}px;background:${colorOf(key || name)};font-size:${Math.round(size * 0.38)}px">${esc(initials(name))}</span>`;
+const avatar = (name, key, size = 40) => `<span class="cw-av" style="width:${size}px;height:${size}px;background:${colorOf(key || name)};font-size:${Math.round(size * 0.38)}px">${esc(initials(name))}</span>`;
+const LOGO = size => `<span class="cw-av cw-logo" style="width:${size}px;height:${size}px"><img src="img/icon.svg" alt=""></span>`;
 const hm = ms => new Date(ms).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 const dayKey = ms => { const d = new Date(ms); return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate(); };
 function dayLabel(ms) {
-  const d = new Date(ms), now = new Date();
-  const y = new Date(now); y.setDate(now.getDate() - 1);
-  if (dayKey(ms) === dayKey(now.getTime())) return 'Bugun';
+  const y = new Date(); y.setDate(y.getDate() - 1);
+  if (dayKey(ms) === dayKey(Date.now())) return 'Bugun';
   if (dayKey(ms) === dayKey(y.getTime())) return 'Kecha';
-  return d.toLocaleDateString('ru-RU');
+  return new Date(ms).toLocaleDateString('ru-RU');
 }
-function listTime(ms) {
-  if (!ms) return '';
-  if (dayKey(ms) === dayKey(Date.now())) return hm(ms);
-  const d = new Date(ms), diff = (Date.now() - ms) / 86400000;
-  if (diff < 6) return ['Yak', 'Du', 'Se', 'Chor', 'Pay', 'Ju', 'Sha'][d.getDay()];
-  return d.toLocaleDateString('ru-RU').slice(0, 5);
+const listTime = ms => !ms ? '' : dayKey(ms) === dayKey(Date.now()) ? hm(ms) : new Date(ms).toLocaleDateString('ru-RU').slice(0, 5);
+
+let W = null; // { ctx, el, view: 'list'|'chat', id, tab, unsub, open }
+
+export function mountChat(ctx) {
+  unmountChat();
+  const el = document.createElement('div');
+  el.id = 'cw';
+  el.innerHTML = `<button class="cw-fab" id="cwFab" aria-label="Muammolar"><svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M12 3C6.5 3 2 6.9 2 11.7c0 2.4 1.1 4.6 3 6.2L4 22l4.6-2.3c1.1.3 2.2.5 3.4.5 5.5 0 10-3.9 10-8.6S17.5 3 12 3z"/></svg><span class="cw-badge hidden" id="cwBadge"></span></button>
+    <div class="cw-box hidden" id="cwBox" role="dialog" aria-label="Muammolar"></div>`;
+  document.body.appendChild(el);
+  W = { ctx, el, view: 'list', id: null, tab: 'open', unsub: null, open: false };
+  el.querySelector('#cwFab').onclick = () => toggle(!W.open);
+  ctx.S.onTopicsChat = refresh;
+  refresh();
+}
+export function unmountChat() {
+  if (!W) return;
+  W.unsub && W.unsub();
+  W.el.remove();
+  document.body.classList.remove('cw-on');
+  W = null;
 }
 
-export function renderTopics(page, ctx) {
-  if (unsubMsgs) { unsubMsgs(); unsubMsgs = null; }
-  document.body.classList.remove('tg-open');
-  const { S } = ctx;
-  const all = S.topics;
-  const list = all.filter(t => (tab === 'open' ? t.status !== 'closed' : t.status === 'closed'));
-  const nOpen = all.filter(t => t.status !== 'closed').length;
-  const row = t => {
-    const un = isUnread(ctx, t);
-    const who = t.lastBy === S.me.id ? 'Siz' : (t.lastByName || t.byName || '').split(' ')[0];
-    const preview = t.replies ? `${esc(who)}: javob yozdi` : esc((t.text || 'Yangi muammo').slice(0, 80));
-    return `<button class="tg-row" data-t="${t.id}">
-      ${avatar(t.title, t.id)}
-      <span class="tg-mid"><span class="tg-l1"><b>${esc(t.title)}</b><span class="tg-time ${un ? 'un' : ''}">${t.status === 'closed' ? '<span class="tg-ok">✓✓</span> ' : ''}${listTime(t.lastAt)}</span></span>
-        <span class="tg-l2"><span class="tg-prev">${t.orderNo ? `<span class="tg-no">№${esc(t.orderNo)}</span> ` : ''}${preview}</span>${un ? '<span class="tg-badge">yangi</span>' : t.replies ? `<span class="tg-cnt">${t.replies}</span>` : ''}</span></span>
-    </button>`;
-  };
-  page.innerHTML = `<div class="tg-list">
-      <div class="tg-head"><h2>💬 Muammolar</h2></div>
-      <div class="tg-seg"><button class="${tab === 'open' ? 'on' : ''}" data-tt="open">Ochiq <span>${nOpen}</span></button><button class="${tab === 'closed' ? 'on' : ''}" data-tt="closed">Hal qilingan <span>${all.length - nOpen}</span></button></div>
-      <div class="tg-rows">${list.map(row).join('') || `<div class="empty">${tab === 'open' ? "Ochiq muammo yo'q 🎉<br><span class=\"hint\">Muammo bo'lsa, pastdagi ✎ tugmasini bosing</span>" : "Hal qilingan muammo yo'q"}</div>`}</div>
-      <button class="tg-fab" id="newT" title="Muammo yozish" aria-label="Muammo yozish">✎</button>
-    </div>`;
-  page.querySelectorAll('[data-tt]').forEach(b => b.onclick = () => { tab = b.dataset.tt; renderTopics(page, ctx); });
-  page.querySelectorAll('[data-t]').forEach(b => b.onclick = () => openTopic(page, ctx, b.dataset.t));
-  page.querySelector('#newT').onclick = () => newTopic(page, ctx);
-  S.onTopics = () => renderTopics(page, ctx);
+function toggle(open) {
+  W.open = open;
+  W.el.querySelector('#cwBox').classList.toggle('hidden', !open);
+  W.el.classList.toggle('open', open);
+  document.body.classList.toggle('cw-on', open);
+  if (open) { if (W.view === 'chat') drawChat(); else drawList(); }
+  else stopMsgs();
+}
+function stopMsgs() { if (W.unsub) { W.unsub(); W.unsub = null; } }
+
+function refresh() {
+  if (!W) return;
+  const n = unreadTopics(W.ctx), b = W.el.querySelector('#cwBadge');
+  b.textContent = n; b.classList.toggle('hidden', !n);
+  if (!W.open) return;
+  if (W.view === 'list') drawList();
+  else if (W.id) updateChatHead();
 }
 
-function photoPicker(root, onPick) {
-  let data = null;
-  const input = root.querySelector('input[type=file]');
-  input.onchange = async () => {
-    const f = input.files[0];
-    if (!f) return;
-    try { data = await compressImage(f, 1280, 280000); onPick && onPick(data); }
-    catch (e) { toast(errText(e), true); }
-  };
-  return { get: () => data, reset: () => { data = null; input.value = ''; onPick && onPick(null); } };
-}
-
-function newTopic(page, ctx) {
-  const { S } = ctx;
-  const orders = S.orders.slice().sort((a, b) => (b.no || 0) - (a.no || 0)).slice(0, 300);
-  const m = modal(`<h2>Yangi muammo</h2><form id="tf">
-    <div class="field"><label>Sarlavha *</label><input class="inp" name="title" required maxlength="150" placeholder="Masalan: Kalkulyatorda oshxona narxi chiqmayapti"></div>
-    <div class="field"><label>Muammoning tavsifi</label><textarea class="inp" name="text" maxlength="3000"></textarea></div>
-    ${orders.length ? `<div class="field"><label>Buyurtma (ixtiyoriy)</label><select class="inp" name="order"><option value="">—</option>${orders.map(o => `<option value="${o.id}">№${o.no} · ${esc(o.client?.name || '')}</option>`).join('')}</select></div>` : ''}
-    <div class="field"><label class="btn sec sm" style="cursor:pointer"><input type="file" accept="image/*" hidden><span id="tfPh">📎 Rasm biriktirish</span></label></div>
-    <div class="err hidden" id="tfErr"></div><button class="btn pri block">Yuborish</button></form>`);
-  const f = m.el.querySelector('#tf');
-  const ph = photoPicker(f, d => { f.querySelector('#tfPh').innerHTML = d ? `<img src="${d}" style="height:40px;border-radius:6px;vertical-align:middle"> rasm tanlandi` : '📎 Rasm biriktirish'; });
-  f.onsubmit = async e => {
-    e.preventDefault();
-    const btn = f.querySelector('button.pri'); btn.disabled = true;
-    try {
-      const o = f.order?.value ? S.orders.find(x => x.id === f.order.value) : null;
-      const now = Date.now();
-      const ref = doc(collection(ctx.db, 'topics'));
-      const d = { title: f.title.value.trim(), text: f.text.value.trim(), by: S.me.id, byName: S.me.fullName || '', byRole: S.me.role, branchId: S.me.branchId || '',
-        orderId: o?.id || '', orderNo: o ? String(o.no) : '', status: 'open', replies: 0, createdAt: now, lastAt: now, lastBy: S.me.id, lastByName: S.me.fullName || '' };
-      if (ph.get()) d.photo = ph.get();
-      await setDoc(ref, d);
-      m.close(); openTopic(page, ctx, ref.id);
-    } catch (er) { const x = f.querySelector('#tfErr'); x.textContent = errText(er); x.classList.remove('hidden'); btn.disabled = false; }
-  };
-}
-
-function openTopic(page, ctx, id) {
-  const { S, db } = ctx;
-  S.onTopics = null;
-  const t = S.topics.find(x => x.id === id);
-  if (!t) { renderTopics(page, ctx); return; }
-  const canClose = S.me.role === 'admin' || t.by === S.me.id;
-  const markSeen = () => {
-    S.me.seen = { ...(S.me.seen || {}), [id]: Date.now() };
-    updateDoc(doc(db, 'profiles', S.me.id), { ['seen.' + id]: Date.now() }).catch(() => {});
-  };
-  markSeen();
-  document.body.classList.add('tg-open');
-  const closed = t.status === 'closed';
-  page.innerHTML = `<div class="tg-chat">
-    <div class="tg-bar">
-      <button class="tg-back" id="tBack" aria-label="Orqaga">←</button>
-      ${avatar(t.title, t.id, 40)}
-      <div class="tg-bt"><b>${esc(t.title)}</b><span id="tSub">${closed ? '✓ Hal qilindi' : 'Ochiq muammo'}${t.orderNo ? ` · <a href="#" id="tOrder">№${esc(t.orderNo)} buyurtma</a>` : ''}</span></div>
-      ${canClose ? `<button class="btn ${closed ? 'sec' : 'green'} sm" id="tClose">${closed ? 'Qayta ochish' : '✓ Hal qilindi'}</button>` : ''}
-    </div>
-    <div class="tg-msgs" id="chat"><div class="loading">…</div></div>
-    <form class="tg-input" id="rf">
-      <label class="tg-ic" title="Rasm"><input type="file" accept="image/*" hidden>📎</label>
-      <div class="tg-tx"><div id="rfPh"></div><textarea name="text" rows="1" maxlength="3000" placeholder="Xabar yozing…"></textarea></div>
-      <button class="tg-send" aria-label="Yuborish">➤</button>
-    </form>
+const head = (inner, back) => `<div class="cw-head">
+    ${back ? '<button class="cw-hb" data-back aria-label="Orqaga">‹</button>' : ''}
+    ${inner}
+    <button class="cw-hb" data-min aria-label="Yopish">✕</button>
   </div>`;
-  const chat = page.querySelector('#chat');
-  const back = () => { if (unsubMsgs) { unsubMsgs(); unsubMsgs = null; } renderTopics(page, ctx); window.scrollTo(0, 0); };
-  page.querySelector('#tBack').onclick = back;
-  const to = page.querySelector('#tOrder');
-  if (to) to.onclick = e => { e.preventDefault(); if (S.orders.some(o => o.id === t.orderId)) { document.body.classList.remove('tg-open'); ctx.openOrder(t.orderId); } else toast("Bu buyurtmani ko'rishga ruxsatingiz yo'q", true); };
+function bindHead(box) {
+  box.querySelector('[data-min]').onclick = () => toggle(false);
+  const b = box.querySelector('[data-back]');
+  if (b) b.onclick = () => { stopMsgs(); W.view = 'list'; W.id = null; drawList(); };
+}
 
-  const bubble = (m, mine, first) => `<div class="tg-msg ${mine ? 'me' : ''}">
-      ${!mine ? `<div class="tg-who" style="color:${colorOf(m.by)}">${esc(m.byName)} <span>· ${esc(ctx.roleName(m.byRole))}</span></div>` : ''}
-      ${first ? `<div class="tg-title">${esc(t.title)}</div>` : ''}
-      ${m.photo ? `<img src="${m.photo}" data-zoom alt="">` : ''}
-      ${m.text ? `<div class="tg-text">${esc(m.text)}</div>` : ''}
-      <div class="tg-meta">${m.delId ? `<a href="#" data-mdel="${m.delId}" title="O'chirish">🗑</a> ` : ''}${hm(m.at)}${mine ? ' <span class="tg-ok">✓✓</span>' : ''}</div>
-    </div>`;
-  const draw = msgs => {
-    const all = [{ ...t, at: t.createdAt, first: true }, ...msgs];
-    let html = '', lastDay = '';
-    for (const m of all) {
-      const k = dayKey(m.at);
-      if (k !== lastDay) { html += `<div class="tg-day"><span>${dayLabel(m.at)}</span></div>`; lastDay = k; }
-      html += bubble(m, m.by === S.me.id, m.first);
-    }
-    if (t.status === 'closed') html += `<div class="tg-day"><span>✓ Muammo hal qilindi</span></div>`;
-    const atBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
-    chat.innerHTML = html;
-    if (atBottom || !draw.done) { chat.scrollTop = chat.scrollHeight; draw.done = true; }
+// ---------- Ro'yxat ----------
+function drawList() {
+  const { S } = W.ctx, box = W.el.querySelector('#cwBox');
+  const all = S.topics, nOpen = all.filter(t => t.status !== 'closed').length;
+  const list = all.filter(t => (W.tab === 'open' ? t.status !== 'closed' : t.status === 'closed'));
+  const row = t => {
+    const un = isUnread(W.ctx, t);
+    const who = t.lastBy === S.me.id ? 'Siz' : (t.lastByName || t.byName || '').split(' ')[0];
+    const prev = t.replies ? `${esc(who)}: javob yozdi` : esc((t.text || '').slice(0, 70));
+    return `<button class="cw-row ${un ? 'un' : ''}" data-t="${t.id}">${avatar(t.byName || t.title, t.by)}
+      <span class="cw-mid"><span class="cw-l1"><b>${esc(t.title)}</b><i>${t.status === 'closed' ? '✓ ' : ''}${listTime(t.lastAt)}</i></span>
+      <span class="cw-l2"><span>${t.orderNo ? `<em>№${esc(t.orderNo)}</em> ` : ''}${prev}</span>${un ? '<span class="cw-dot"></span>' : ''}</span></span></button>`;
   };
-  chat.addEventListener('click', async e => {
+  box.innerHTML = `${head(`${LOGO(40)}<div class="cw-ht"><b>Bizga murojaat qiling!</b><span>Muammo yoki savolingizni yozing</span></div>`)}
+    <div class="cw-seg"><button data-tt="open" class="${W.tab === 'open' ? 'on' : ''}">Ochiq <span>${nOpen}</span></button><button data-tt="closed" class="${W.tab === 'closed' ? 'on' : ''}">Hal qilingan <span>${all.length - nOpen}</span></button></div>
+    <div class="cw-body cw-list">${list.map(row).join('') || `<div class="cw-empty">${W.tab === 'open' ? 'Ochiq muammo yo\'q 🎉' : "Hal qilingan muammo yo'q"}</div>`}</div>
+    <div class="cw-foot"><button class="cw-new" id="cwNew">✎ Yangi muammo yozish</button></div>`;
+  bindHead(box);
+  box.querySelectorAll('[data-tt]').forEach(b => b.onclick = () => { W.tab = b.dataset.tt; drawList(); });
+  box.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { W.view = 'chat'; W.id = b.dataset.t; drawChat(); });
+  box.querySelector('#cwNew').onclick = () => { W.view = 'chat'; W.id = null; drawChat(); };
+}
+
+// ---------- Suhbat ----------
+function chatHeadHtml(t) {
+  if (!t) return `${LOGO(36)}<div class="cw-ht"><b>Yangi muammo</b><span>Baraka Mebel</span></div>`;
+  const closed = t.status === 'closed';
+  return `${avatar(t.byName || t.title, t.by, 36)}<div class="cw-ht"><b>${esc(t.title)}</b><span>${closed ? '✓ Hal qilindi' : 'Ochiq muammo'}${t.orderNo ? ` · <a href="#" data-order>№${esc(t.orderNo)}</a>` : ''}</span></div>`;
+}
+// Holat (ochiq/hal qilingan) o'zgarsa — suhbatni qayta chizamiz; aks holda yozilayotgan matn saqlanadi
+function updateChatHead() {
+  const t = W.ctx.S.topics.find(x => x.id === W.id), h = W.el.querySelector('.cw-head');
+  if (t && h && h.dataset.st !== t.status) drawChat();
+}
+
+function drawChat() {
+  const { S, db } = W.ctx, box = W.el.querySelector('#cwBox');
+  stopMsgs();
+  const t = W.id ? S.topics.find(x => x.id === W.id) : null;
+  if (W.id && !t) { W.view = 'list'; W.id = null; drawList(); return; }
+  const canClose = t && (S.me.role === 'admin' || t.by === S.me.id);
+  const closed = t?.status === 'closed';
+  box.innerHTML = `${head(chatHeadHtml(t), true)}
+    <div class="cw-body cw-msgs" id="cwMsgs"></div>
+    ${canClose ? `<div class="cw-bar"><button class="cw-act ${closed ? '' : 'ok'}" id="cwClose">${closed ? '↺ Qayta ochish' : '✓ Muammo hal qilindi'}</button></div>` : ''}
+    <form class="cw-in" id="cwForm">
+      <div id="cwPh"></div>
+      <div class="cw-in1"><textarea name="text" rows="1" maxlength="3000" placeholder="Xabarni kiriting"></textarea><button class="cw-send" disabled aria-label="Yuborish">↑</button></div>
+      <div class="cw-in2"><label class="cw-ic" title="Rasm biriktirish"><input type="file" accept="image/*" hidden>📎 Rasm</label></div>
+    </form>`;
+  box.querySelector('.cw-head').dataset.st = t?.status || '';
+  bindHead(box);
+  const msgs = box.querySelector('#cwMsgs');
+  const ol = box.querySelector('[data-order]');
+  if (ol) ol.onclick = e => { e.preventDefault(); if (S.orders.some(o => o.id === t.orderId)) { if (innerWidth < 600) toggle(false); W.ctx.openOrder(t.orderId); } else toast("Bu buyurtmani ko'rishga ruxsatingiz yo'q", true); };
+
+  const greet = `<div class="cw-grp"><div class="cw-side">${LOGO(30)}</div><div class="cw-col"><div class="cw-who" style="color:var(--g)">Baraka Mebel</div><div class="cw-msg"><div class="cw-text">Assalomu alaykum! 👋
+Muammo yoki savolingizni aniq yozib qoldiring. Masalan:
+- qaysi bo'limda (kalkulyator, buyurtma, PDF…);
+- buyurtma raqami bo'lsa — <b>№123</b> ko'rinishida yozing;
+- iloji bo'lsa, rasm (skrinshot) qo'shing.
+
+Sizga tez orada javob beramiz.</div></div></div></div>`;
+
+  // Bir odamning ketma-ket xabarlari bitta guruhda: ism — tepada, avatar — pastda
+  const draw = list => {
+    let html = t ? '' : greet, day = '';
+    const items = t ? [{ ...t, at: t.createdAt, first: true }, ...list] : [];
+    for (let i = 0; i < items.length;) {
+      const m = items[i], k = dayKey(m.at);
+      if (k !== day) { html += `<div class="cw-day"><span>${dayLabel(m.at)}</span></div>`; day = k; }
+      const g = [m];
+      while (i + g.length < items.length && items[i + g.length].by === m.by && dayKey(items[i + g.length].at) === k) g.push(items[i + g.length]);
+      i += g.length;
+      const mine = m.by === S.me.id;
+      html += `<div class="cw-grp ${mine ? 'me' : ''}">${mine ? '' : `<div class="cw-side">${avatar(m.byName, m.by, 30)}</div>`}<div class="cw-col">
+        ${mine ? '' : `<div class="cw-who" style="color:${colorOf(m.by)}">${esc(m.byName)} <span>${esc(W.ctx.roleName(m.byRole))}</span></div>`}
+        ${g.map(x => `<div class="cw-msg">${x.first && !(x.text || '').startsWith(t.title) ? `<div class="cw-title">${esc(t.title)}</div>` : ''}${x.photo ? `<img src="${x.photo}" data-zoom alt="">` : ''}${x.text ? `<div class="cw-text">${esc(x.text)}</div>` : ''}
+          <div class="cw-meta">${x.delId ? `<a href="#" data-mdel="${x.delId}" title="O'chirish">🗑</a>` : ''}${hm(x.at)}${mine ? ' <b>✓✓</b>' : ''}</div></div>`).join('')}
+      </div></div>`;
+    }
+    if (closed) html += '<div class="cw-day ok"><span>✓ Muammo hal qilindi</span></div>';
+    const atBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 80;
+    msgs.innerHTML = html;
+    if (atBottom || !draw.done) { msgs.scrollTop = msgs.scrollHeight; draw.done = true; }
+  };
+  msgs.addEventListener('click', async e => {
     const z = e.target.closest('[data-zoom]');
     if (z) modal(`<img src="${z.src}" style="width:100%;border-radius:10px" alt="">`, { wide: true });
     const d = e.target.closest('[data-mdel]');
-    if (d) { e.preventDefault(); if (await confirmBox("Xabar o'chirilsinmi?", "O'chirish", true)) deleteDoc(doc(db, 'topics', id, 'msgs', d.dataset.mdel)).catch(er => toast(errText(er), true)); }
+    if (d) { e.preventDefault(); if (await confirmBox("Xabar o'chirilsinmi?", "O'chirish", true)) deleteDoc(doc(db, 'topics', W.id, 'msgs', d.dataset.mdel)).catch(er => toast(errText(er), true)); }
   });
-  unsubMsgs = onSnapshot(collection(db, 'topics', id, 'msgs'), snap => {
-    const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.at - b.at)
-      .map(m => ({ ...m, delId: (m.by === S.me.id || S.me.role === 'admin') ? m.id : null }));
-    draw(msgs);
-    markSeen();
-  }, () => { chat.innerHTML = '<div class="empty">Xabarlarni yuklab bo\'lmadi</div>'; });
 
-  const rf = page.querySelector('#rf');
-  const ta = rf.text;
-  const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; };
+  const markSeen = () => {
+    S.me.seen = { ...(S.me.seen || {}), [t.id]: Date.now() };
+    updateDoc(doc(db, 'profiles', S.me.id), { ['seen.' + t.id]: Date.now() }).catch(() => {});
+    const n = unreadTopics(W.ctx), b = W.el.querySelector('#cwBadge');
+    b.textContent = n; b.classList.toggle('hidden', !n);
+  };
+  if (t) {
+    markSeen();
+    W.unsub = onSnapshot(collection(db, 'topics', t.id, 'msgs'), snap => {
+      draw(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.at - b.at)
+        .map(m => ({ ...m, delId: (m.by === S.me.id || S.me.role === 'admin') ? m.id : null })));
+      markSeen();
+    }, () => { msgs.innerHTML = '<div class="cw-empty">Xabarlarni yuklab bo\'lmadi</div>'; });
+  } else draw([]);
+
+  const f = box.querySelector('#cwForm'), ta = f.text, send = f.querySelector('.cw-send');
+  const fi = f.querySelector('input[type=file]');
+  let photo = null;
+  const sync = () => { send.disabled = !ta.value.trim() && !photo; };
+  const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(120, ta.scrollHeight) + 'px'; sync(); };
   ta.addEventListener('input', grow);
   // Kompyuterda Enter — yuborish, Shift+Enter — yangi qator
-  ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !('ontouchstart' in window)) { e.preventDefault(); rf.requestSubmit(); } });
-  const ph = photoPicker(rf, d => { page.querySelector('#rfPh').innerHTML = d ? `<div class="tg-att"><img src="${d}" alt=""><button type="button" id="rfX">×</button></div>` : ''; const x = page.querySelector('#rfX'); if (x) x.onclick = () => ph.reset(); });
-  rf.onsubmit = async e => {
+  ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !('ontouchstart' in window)) { e.preventDefault(); f.requestSubmit(); } });
+  const setPhoto = d => {
+    photo = d;
+    box.querySelector('#cwPh').innerHTML = d ? `<div class="cw-att"><img src="${d}" alt=""><button type="button" id="cwPhX" aria-label="Olib tashlash">×</button></div>` : '';
+    const x = box.querySelector('#cwPhX'); if (x) x.onclick = () => { fi.value = ''; setPhoto(null); };
+    sync();
+  };
+  fi.onchange = async () => { if (fi.files[0]) try { setPhoto(await compressImage(fi.files[0], 1280, 280000)); } catch (e) { toast(errText(e), true); } };
+
+  f.onsubmit = async e => {
     e.preventDefault();
     const text = ta.value.trim();
-    if (!text && !ph.get()) return;
-    const btn = rf.querySelector('.tg-send'); btn.disabled = true;
+    if (!text && !photo) return;
+    send.disabled = true;
+    const now = Date.now(), ph = photo;
     try {
-      const now = Date.now();
+      if (!t) {
+        // Yangi muammo: birinchi qator — sarlavha, "№123" — buyurtmaga bog'lanadi
+        const no = (text.match(/№\s*(\d+)/) || [])[1];
+        const o = no ? S.orders.find(x => String(x.no) === no) : null;
+        const title = (text.split('\n')[0] || 'Rasm').slice(0, 80);
+        const ref = doc(collection(db, 'topics'));
+        const d = { title, text, by: S.me.id, byName: S.me.fullName || '', byRole: S.me.role, branchId: S.me.branchId || '',
+          orderId: o?.id || '', orderNo: o ? String(o.no) : '', status: 'open', replies: 0, createdAt: now, lastAt: now, lastBy: S.me.id, lastByName: S.me.fullName || '' };
+        if (ph) d.photo = ph;
+        await setDoc(ref, d);
+        W.id = ref.id;
+        if (!S.topics.some(x => x.id === ref.id)) S.topics.unshift({ id: ref.id, ...d });
+        drawChat();
+        return;
+      }
       const m = { text, by: S.me.id, byName: S.me.fullName || '', byRole: S.me.role, at: now };
-      if (ph.get()) m.photo = ph.get();
-      ta.value = ''; grow(); ph.reset();
-      await setDoc(doc(collection(db, 'topics', id, 'msgs')), m);
-      await updateDoc(doc(db, 'topics', id), { lastAt: now, lastBy: S.me.id, lastByName: S.me.fullName || '', replies: increment(1) });
-      chat.scrollTop = chat.scrollHeight;
-    } catch (er) { toast(errText(er), true); }
-    btn.disabled = false; ta.focus();
+      if (ph) m.photo = ph;
+      ta.value = ''; fi.value = ''; setPhoto(null); grow();
+      await setDoc(doc(collection(db, 'topics', t.id, 'msgs')), m);
+      await updateDoc(doc(db, 'topics', t.id), { lastAt: now, lastBy: S.me.id, lastByName: S.me.fullName || '', replies: increment(1) });
+      msgs.scrollTop = msgs.scrollHeight;
+    } catch (er) { toast(errText(er), true); sync(); }
+    ta.focus();
   };
-  const tc = page.querySelector('#tClose');
+  const tc = box.querySelector('#cwClose');
   if (tc) tc.onclick = async () => {
     const closing = t.status !== 'closed';
     if (closing && !await confirmBox('Muammo hal qilindi deb belgilansinmi?', 'Ha, hal qilindi')) return;
     try {
-      await updateDoc(doc(db, 'topics', id), closing ? { status: 'closed', closedBy: S.me.id, closedAt: Date.now() } : { status: 'open', lastAt: Date.now() });
+      await updateDoc(doc(db, 'topics', t.id), closing ? { status: 'closed', closedBy: S.me.id, closedAt: Date.now() } : { status: 'open', lastAt: Date.now() });
       t.status = closing ? 'closed' : 'open';
       toast(closing ? 'Hal qilindi' : 'Qayta ochildi');
-      openTopic(page, ctx, id);
+      drawChat();
     } catch (e) { toast(errText(e), true); }
   };
+  if (innerWidth >= 600) ta.focus();
 }
