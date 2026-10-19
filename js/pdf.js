@@ -40,7 +40,7 @@ const safeName = s => (s || 'mijoz').replace(/[^\p{L}\p{N}]+/gu, '_');
 
 function header(nomi, kontakt, title, sub, badge) {
   return `<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;border-bottom:3px solid #E8B921;padding-bottom:8px">
-      <div style="min-width:0"><div style="font-size:22px;font-weight:700;color:#00297D;letter-spacing:.5px">${esc(nomi)}</div><div style="color:#5F6B82;font-size:11px">${esc(kontakt)}</div></div>
+      <div style="min-width:0"><img src="img/logo-full.png" alt="" style="height:46px;display:block;margin-bottom:4px"><div style="font-size:13px;font-weight:700;color:#00297D">${esc(nomi)}</div><div style="color:#5F6B82;font-size:11px">${esc(kontakt || '')}</div></div>
       <div style="text-align:right;flex:none"><div style="font-size:16px;font-weight:700;color:#00297D">${title}</div>${badge || ''}<div style="font-size:11px">${sub}</div></div>
     </div>`;
 }
