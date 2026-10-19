@@ -39,7 +39,7 @@ const saved = async page => { await page.waitForSelector('#toast.show:not(.bad)'
 async function login(page, phone, pw) {
   await page.goto(BASE);
   await page.waitForSelector('#loginForm:visible');
-  await page.fill('#lPhone', phone); await page.fill('#lPass', pw);
+  await page.fill('#loginForm [name=lPhone]', phone); await page.fill('#lPass', pw);
   await page.click('#loginBtn');
   await page.waitForSelector('#app:not(.hidden)', { timeout: 20000 });
   await page.waitForSelector('.page :is(.olist, .empty, .stats, h2)', { timeout: 20000 });
@@ -50,7 +50,7 @@ const openFirst = async page => { await page.click('[data-open]'); await page.wa
 let page = await newPage();
 await page.goto(BASE);
 await page.waitForSelector('#setupForm:visible');
-await page.fill('#sName', 'Bosh Admin'); await page.fill('#sPhone', '901111111');
+await page.fill('#sName', 'Bosh Admin'); await page.fill('#setupForm [name=sPhone]', '901111111');
 await page.fill('#sPass', 'AdminParol123!'); await page.fill('#sPass2', 'AdminParol123!');
 await page.click('#setupBtn');
 await page.waitForSelector('#app:not(.hidden)', { timeout: 30000 });
@@ -59,8 +59,6 @@ await shot(page, 'admin-bosh');
 
 // 2. Sozlamalar: usta standart foizi, ustamalar
 await page.click('[data-tab="settings"]');
-await page.fill('#ufSp', '10'); await page.fill('#ufKor', '10');
-await page.click('#saveSet'); await toastWait(page);
 await page.click('[data-st="narx"]');
 await page.fill('[data-key="Sozlamalar!C9"]', '30'); await page.fill('[data-key="Sozlamalar!C11"]', '25');
 await page.click('#saveSet'); await toastWait(page);
@@ -76,9 +74,9 @@ for (const [n, ph, r] of staff) {
   await page.click('#addSt');
   await page.fill('#sf [name=fullName]', n); await page.fill('#sf [name=phone]', ph); await page.fill('#sf [name=pw]', 'Parol1234');
   await page.selectOption('#sf [name=role]', r);
-  if (r === 'usta') await page.fill('#sf [name=ustaFoiz]', '12');
+  if (r === 'usta') await page.fill('#sf [name=ustaFoiz]', '10');
   await page.click('#sf button.pri');
-  await page.waitForSelector('#sf', { state: 'detached', timeout: 20000 });
+  try { await page.waitForSelector('#sf', { state: 'detached', timeout: 20000 }); } catch (e) { console.log('FORM XATO:', r, await page.textContent('#sfErr')); await shot(page, 'form-xato'); throw e; }
 }
 await shot(page, 'xodimlar');
 await page.context().close();
@@ -94,9 +92,11 @@ await page.waitForSelector('[data-a="calc"]');
 await page.click('[data-a="calc"]');
 await page.check('[data-sec="Buyurtma!B11"]');
 await page.waitForSelector('[data-k="Spalniy!C8"]');
+await page.selectOption('[data-k="_usta"]', { index: 1 });
 await page.fill('[data-k="Spalniy!C8"]', '260');
 await page.selectOption('[data-k="Buyurtma!B20"]', '6 oy');
-await page.fill('[data-pct="Buyurtma!B21"]', '20');
+await page.fill('[data-link="oldPct"]', '20');
+await page.fill('[data-link="chegSum"]', '500 000');
 await page.waitForTimeout(800);
 await shot(page, 'kalkulyator');
 const price1 = await page.textContent('#rbPrice');
@@ -106,14 +106,17 @@ await page.click('[data-a="formal"]');
 await page.waitForSelector('#ppUp [data-up="oldi"]', { state: 'attached' });
 await page.setInputFiles('#ppUp [data-up="oldi"]', IMG);
 await page.waitForSelector('#ppUp [data-side="oldi"][data-has="1"]', { timeout: 20000 });
+await page.waitForSelector('#fmSkip:visible');
 await page.setInputFiles('#ppUp [data-up="orqa"]', IMG);
 await page.waitForSelector('#ppUp [data-side="orqa"][data-has="1"]', { timeout: 20000 });
+await page.waitForSelector('#fmBtn:visible');
 await page.selectOption('#olSel', { label: "O'lchovchi Karim" });
 await shot(page, 'rasmiylashtirish');
 await page.click('#fmBtn');
 await page.waitForSelector('.badge:has-text("Shartnomachida")', { timeout: 20000 }); await saved(page);
-const noPdf = await page.$('[data-a="pdf"]');
-console.log('Narx:', price1, '| shartnomadan oldin PDF tugmasi:', !!noPdf);
+const preDl = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.locator('[data-a="pdf"]').click()]);
+await preDl[0].saveAs(`${SHOTS}/narx-taklifi-oldin.pdf`);
+console.log('Narx:', price1, '| shartnomadan oldin PDF yuklandi');
 await page.context().close();
 
 // 5. Shartnomachi
@@ -132,8 +135,13 @@ await login(page, '904444444', 'Parol1234');
 await openFirst(page);
 const seesPrice = await page.$('text=Naqd narx');
 await page.waitForSelector('#olchovUp input[type=file]', { state: 'attached' });
-await page.setInputFiles('#olchovUp input[type=file]', IMG);
-await page.waitForSelector('#olchovUp .ph', { timeout: 20000 });
+await page.setInputFiles('#olchovUp input[type=file]', [IMG, IMG]);
+await page.waitForSelector('#olchovUp .ph >> nth=1', { timeout: 20000 });
+await page.click('[data-a="olchandi"]');
+await page.waitForSelector('#toast.show.bad');
+await page.waitForSelector('#olchovUp input[type=file]', { state: 'attached' });
+await page.setInputFiles('#olchovUp input[type=file]', [IMG, IMG]);
+await page.waitForSelector('#olchovUp .ph >> nth=3', { timeout: 20000 });
 await page.fill('#olchovIzoh', "Devor 280 sm, shift 265 sm. Shkaf uchun joy 260×60.");
 await shot(page, 'olchovchi');
 await page.click('[data-a="olchandi"]');
@@ -173,7 +181,7 @@ await page.selectOption('#ustaSel', { index: 1 });
 await page.waitForTimeout(300);
 await shot(page, 'rahbar');
 await page.click('[data-a="assign"]');
-await page.waitForSelector(".badge:has-text(\"Usta tasdig'ida\")", { timeout: 20000 }); await saved(page);
+await page.waitForSelector(".badge:has-text(\"Usta qabul qilishi\")", { timeout: 20000 }); await saved(page);
 await page.context().close();
 
 // 9. Usta
@@ -181,14 +189,16 @@ page = await newPage();
 await login(page, '906666666', 'Parol1234');
 await openFirst(page);
 await shot(page, 'usta');
+await page.fill('#muddatIn', '2030-12-31');
 await page.locator('[data-a="u-ok"]').click();
+await page.click('.modal [data-ok]');
 await saved(page);
 for (let i = 0; i < 3; i++) { await page.waitForTimeout(3000); await page.locator('[data-a="u-next"]').click(); await saved(page); }
 await page.waitForSelector('#yetkUp input[type=file]', { state: 'attached', timeout: 20000 });
 await page.click('[data-a="delivered"]');
 await page.waitForSelector('#toast.show.bad');
-await page.setInputFiles('#yetkUp input[type=file]', IMG);
-await page.waitForSelector('#yetkUp .ph', { timeout: 20000 });
+await page.setInputFiles('#yetkUp input[type=file]', [IMG, IMG, IMG, IMG]);
+await page.waitForSelector('#yetkUp .ph >> nth=3', { timeout: 20000 });
 await page.click('[data-a="delivered"]');
 await page.waitForSelector('.badge:has-text("Yakunlandi")', { timeout: 20000 }); await saved(page);
 await shot(page, 'usta-yakunlandi');
@@ -204,6 +214,29 @@ await page.click('[data-chip="all"]');
 await openFirst(page);
 await page.waitForSelector('#ph-yetkazish img', { timeout: 20000 });
 await shot(page, 'admin-buyurtma');
+{
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.locator('[data-a="finalpdf"]').click()]);
+  await dl.saveAs(`${SHOTS}/yakuniy.pdf`);
+  console.log('Yakuniy PDF:', dl.suggestedFilename());
+}
+await page.click('[data-tab="report"]');
+await page.waitForSelector('#rpP');
+await shot(page, 'hisobot');
+console.log('Hisobot foyda:', (await page.textContent('.stats .stat:nth-child(4) b')).trim());
+await page.click('[data-tab="muammo"]');
+await page.click('#newT');
+await page.fill('#tf [name=title]', 'Sinov muammo');
+await page.fill('#tf [name=text]', 'Tekshiruv');
+await page.click('#tf button.pri');
+await page.waitForSelector('#rf');
+await page.fill('#rf [name=text]', 'Javob');
+await page.click('#rf button.pri');
+await page.waitForSelector('.msg >> nth=1', { timeout: 15000 });
+await shot(page, 'muammo');
+await page.click('[data-tab="settings"]');
+await page.click('[data-st="rollar"]');
+await page.waitForSelector('.perm-tbl');
+await shot(page, 'rollar');
 await page.context().close();
 
 await browser.close();

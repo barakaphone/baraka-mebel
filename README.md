@@ -4,15 +4,21 @@ Mebel buyurtmalarini boshqarish tizimi: lid → narx hisobi → shartnoma → o'
 
 Sayt: `https://barakaphone.github.io/baraka-mebel/` (GitHub Pages yoqilgandan keyin).
 
-## Rollar
+## Rollar va ruxsatlar
+Tizim rol nomiga emas, **ruxsatlarga** qarab ishlaydi (Sozlamalar → Rollar va ruxsatlar). Standart rollar:
+
 | Rol | Nima qiladi |
 |---|---|
-| Admin | Hammasi: xodimlar, filiallar, sozlamalar, barcha buyurtmalar |
-| Mebel rahbari | Buyurtmani ustaga biriktiradi, ustalarni qo'shadi, xom ashyo narxlarini belgilaydi |
-| Sotuvchi | O'z filiali murojaatlari, narx hisoblash, rasmiylashtirish, PDF |
+| Admin | Hammasi (usta foizidan tashqari — u alohida yoqiladi) |
+| Mebel rahbari | Ustaga biriktirish, ustalar va ularning foizi, xom ashyo narxlari, yakuniy PDF |
+| Sotuvchi | O'z filiali murojaatlari, narx hisoblash, chegirma, rasmiylashtirish, PDF |
 | Shartnomachi | Muddatli to'lovni tekshiradi: limit + "Shartnoma chiqarilsin" / "Bekor qilinsin" |
-| O'lchovchi | Mijoz uyida o'lchaydi, rasm va o'lchamlarni biriktiradi |
-| Usta | Narxni tasdiqlaydi, kesish → yig'ish → qadoqlash → yetkazildi (rasm bilan) |
+| O'lchovchi | Mijoz uyida o'lchaydi, kamida 4 ta rasm va o'lchamlar |
+| Usta | Ishni muddat bilan qabul qiladi, kesish → yig'ish → qadoqlash → yetkazildi (kamida 4 ta rasm) |
+
+Yangi rol yaratish mumkin. Rollarni tizim egasi va u ruxsat bergan adminlar o'zgartiradi.
+Usta foizi `ustaFoiz/{uid}` da, usta haqi `orders/{id}/pul/main` da — ruxsati yo'q xodim ularni o'qiy olmaydi;
+usta faqat o'z haqi summasini (`orders/{id}/usta/main`) ko'radi.
 
 ## Birinchi ishga tushirish
 1. **Himoya qoidalari:** Firebase konsoli → Firestore → **Rules** → `firestore.rules` matnini to'liq joylab, **Publish**.

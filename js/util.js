@@ -81,3 +81,31 @@ export function compressImage(file, maxSide = 1600, maxLen = 380000) {
     img.src = url;
   });
 }
+
+// ---------- Telefon va pul maydonlari ----------
+// Telefon: "+998" doim turadi, qolgan 9 raqam "91 697 07 20" ko'rinishida
+export const phoneLocal = v => {
+  let d = digits(v);
+  if (d.length > 9 && d.startsWith('998')) d = d.slice(3);
+  d = d.slice(0, 9);
+  return [d.slice(0, 2), d.slice(2, 5), d.slice(5, 7), d.slice(7, 9)].filter(Boolean).join(' ');
+};
+export const phoneField = (name, value, extra = '') =>
+  `<div class="phone-in"><span>+998</span><input class="inp" name="${name}" data-phone inputmode="numeric" autocomplete="off" placeholder="90 123 45 67" value="${esc(value ? phoneLocal(value) : '')}" ${extra}></div>`;
+// Pul: "2 500 000"
+export const moneyFmt = v => { const d = digits(v); return d ? d.replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ' ') : ''; };
+
+function keepCaret(el, formatted) {
+  // kursor oldidagi raqamlar soni saqlanadi
+  const pos = el.selectionStart ?? el.value.length;
+  const before = digits(el.value.slice(0, pos)).length;
+  el.value = formatted;
+  let i = 0, seen = 0;
+  while (i < formatted.length && seen < before) { if (/\d/.test(formatted[i])) seen++; i++; }
+  try { el.setSelectionRange(i, i); } catch (e) { /* type=tel emas */ }
+}
+document.addEventListener('input', e => {
+  const t = e.target;
+  if (t.matches?.('[data-phone]')) keepCaret(t, phoneLocal(t.value));
+  else if (t.matches?.('[data-money]')) keepCaret(t, moneyFmt(t.value));
+}, true);

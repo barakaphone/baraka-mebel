@@ -146,8 +146,11 @@ table.tbl{border-collapse:collapse;width:100%;font-size:14px}
 .grp>summary::after{content:"▾";color:var(--muted)}
 .grp[open]>summary::after{content:"▴"}
 .grp .body{padding:4px 14px 12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px 12px}
-.grp .body .field{margin:0}
-.grp .body .field label{font-size:13px}
+.grp .body .field,.pay-grid .field{margin:0;display:flex;flex-direction:column;justify-content:flex-end}
+.field label .lt{display:block;font-size:13px;color:var(--muted);font-weight:500}
+.field label .ls{display:block;font-size:11.5px;color:#8A94A8;line-height:1.25;margin-top:1px}
+.grp .body .field label,.pay-grid .field label{margin-bottom:5px}
+.pay-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px 12px;align-items:end}
 .unit{color:var(--muted);font-size:12px}
 .res-bar{position:sticky;bottom:0;z-index:15;background:var(--surface);border-top:3px solid var(--y);box-shadow:0 -6px 20px rgba(0,41,125,.1);margin:16px -16px -120px;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px))}
 .res-bar .in{max-width:1000px;margin:0 auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -187,3 +190,18 @@ button.stat{cursor:pointer}
   .pp{grid-template-columns:1fr}
 }
 @media print{.bar,.res-bar,.toolbar{display:none!important}}
+
+.phone-in{display:flex;align-items:stretch}
+.phone-in span{display:flex;align-items:center;padding:0 10px;background:var(--surface2);border:1px solid var(--line);border-right:0;border-radius:10px 0 0 10px;color:var(--muted);font-weight:600}
+.phone-in .inp{border-radius:0 10px 10px 0}
+.late{color:var(--bad);font-weight:700}.soon{color:var(--warn);font-weight:700}
+.badge.late{background:var(--badSoft);color:var(--bad)}.badge.soon{background:var(--warnSoft);color:var(--warn)}
+.cnt-ok{color:var(--ok);font-weight:700}.cnt-no{color:var(--bad);font-weight:700}
+.perm-tbl td,.perm-tbl th{text-align:center}.perm-tbl td:first-child,.perm-tbl th:first-child{text-align:left}
+.perm-tbl input{width:20px;height:20px;accent-color:var(--g)}
+.chat{display:flex;flex-direction:column;gap:8px}
+.msg{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 12px;max-width:85%}
+.msg.me{align-self:flex-end;background:var(--gSoft);border-color:var(--gLine)}
+.msg .who{font-size:12px;color:var(--muted)}
+.msg img{max-width:220px;border-radius:8px;display:block;margin-top:6px;cursor:pointer}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--bad);margin-left:6px}

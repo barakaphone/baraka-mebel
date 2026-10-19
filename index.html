@@ -24,7 +24,7 @@
     <h2>Tizimni sozlash</h2>
     <p class="sub">Bir martalik. Siz tizim egasi (bosh admin) bo'lasiz.</p>
     <div class="field"><label>F.I.O.</label><input class="inp" id="sName" required maxlength="80"></div>
-    <div class="field"><label>Telefon raqami (login)</label><input class="inp" id="sPhone" inputmode="tel" required placeholder="90 123 45 67"><div class="hint" id="sLoginPrev"></div></div>
+    <div class="field"><label>Telefon raqami (login)</label><div id="sPhoneWrap"></div></div>
     <div class="field"><label>Parol (kamida 12 belgi)</label><input class="inp" id="sPass" type="password" required minlength="12" autocomplete="new-password"></div>
     <div class="field"><label>Parolni takrorlang</label><input class="inp" id="sPass2" type="password" required minlength="12" autocomplete="new-password"></div>
     <label class="showpw"><input type="checkbox" data-showpw="sPass,sPass2"> Parolni ko'rsatish</label>
@@ -39,7 +39,7 @@
   <form class="authbox" id="loginForm">
     <div class="logo big">BARAKA <span>MEBEL</span></div>
     <p class="sub">Xodimlar uchun kirish</p>
-    <div class="field"><label>Telefon raqami</label><input class="inp" id="lPhone" inputmode="tel" required autocomplete="username" placeholder="90 123 45 67"></div>
+    <div class="field"><label>Telefon raqami</label><div id="lPhoneWrap"></div></div>
     <div class="field"><label>Parol</label><input class="inp" id="lPass" type="password" required autocomplete="current-password"></div>
     <label class="showpw"><input type="checkbox" data-showpw="lPass"> Parolni ko'rsatish</label>
     <div class="err hidden" id="loginErr"></div>

@@ -53,7 +53,8 @@
     v['Buyurtma!B11'] = "Yo'q"; v['Buyurtma!B12'] = "Yo'q"; v['Buyurtma!B13'] = "Yo'q";
     v['Buyurtma!B16'] = 0; v['Buyurtma!B20'] = 'Naqd'; v['Buyurtma!B21'] = 0; v['Buyurtma!B22'] = '';
     for (const f of spalniyFields) v[f.key] = f.def ?? '';
-    for (const r of OSH_ROWS) for (const c of ['B', 'C', 'D', 'F']) v[`Oshxona!${c}${r}`] = '';
+    for (const r of OSH_ROWS) for (const c of ['B', 'C', 'D']) v[`Oshxona!${c}${r}`] = '';
+    v._chegMode = 'pct'; v._oldMode = 'pct'; v._chegSum = ''; v._usta = '';
     for (const col of KOR_COLS) for (const f of korpusFields) {
       const k = `Korpus mebel!${col}${f.row}`;
       let d = cell('Korpus mebel', col + f.row);
@@ -68,9 +69,11 @@
   function normalize(inputs) {
     const out = {};
     for (const [k, val] of Object.entries(inputs)) {
+      if (!k.includes('!')) continue; // "_usta", "_chegMode" … — ilova uchun, Excel katagi emas
       if (val === '' || val === null || val === undefined) { out[k] = ''; continue; }
       if (typeof val === 'number') { out[k] = val; continue; }
-      const s = String(val).trim();
+      let s = String(val).trim();
+      if (/^[\d\s\u00a0.,]+$/.test(s)) s = s.replace(/[\s\u00a0]/g, ''); // "2 500 000"
       const n = Number(s.replace(',', '.'));
       out[k] = (s !== '' && !isNaN(n) && !/x/i.test(s)) ? n : s;
     }
@@ -89,9 +92,11 @@
     const xom = (settings && settings.xom) || {};
     for (const [k, v] of Object.entries(kalk)) if (!isXomKey(k)) out[k] = v;
     for (const [k, v] of Object.entries(xom)) if (isXomKey(k)) out[k] = v;
-    // Usta foizi: hisobda standart foiz (usta keyin biriktiriladi)
-    out['Sozlamalar!C17'] = Number((settings && settings.ustaFoizSp) ?? 0) || 0;
-    out['Sozlamalar!C18'] = Number((settings && settings.ustaFoizKor) ?? 0) || 0;
+    // Usta foizi: kalkulyatorda tanlangan ustaniki (spalniy va korpus uchun bitta usta)
+    const uf = Number((settings && settings.ustaFoiz) ?? 0) || 0;
+    out['Sozlamalar!C17'] = uf;
+    out['Sozlamalar!C18'] = uf;
+    applyXomExtra(out, settings);
     // Oshxona ro'yxatlari jadvaldan avtomatik
     const mats = [], bals = [];
     for (let r = 5; r <= 34; r++) {
@@ -108,15 +113,64 @@
     return out;
   }
 
+  // Oshxona: xomashyo → narxi bor balandliklar
   function oshxonaLists(settings) {
-    const s = settingsCells(settings);
-    const mats = [], bals = [];
-    for (let i = 0; i < 15; i++) {
-      const a = s['Oshxona narxlari!F' + (5 + i)], b = s['Oshxona narxlari!G' + (5 + i)];
-      if (a !== '') mats.push(a);
-      if (b !== '') bals.push(b);
+    const pairs = {};
+    for (let r = 5; r <= 34; r++) {
+      const a = current('Oshxona narxlari!A' + r, settings), b = current('Oshxona narxlari!B' + r, settings), c = current('Oshxona narxlari!C' + r, settings);
+      if (a === '' || a === null || b === '' || b === null || c === '' || c === null) continue;
+      (pairs[a] ||= []).includes(b) || pairs[a].push(b);
     }
-    return { mats, bals };
+    for (const k of Object.keys(pairs)) pairs[k].sort((x, y) => x - y);
+    return { mats: Object.keys(pairs), pairs };
+  }
+
+  // ---------- Qo'shimcha va o'chirilgan xom ashyolar ----------
+  // Yangi xom ashyo sarfi "1 dona mahsulotga necha birlik" deb kiritiladi va o'sha mahsulot
+  // xom ashyosiga (Tannarx!B7…, 'Korpus hisob'!C87…) formulaning o'ziga qo'shiladi —
+  // shunda usta haqi, Baraka ustamasi va yaxlitlash Excel'dagidek ishlaydi.
+  const SP_COLS = { shkaf: ['B', 'shkaf_kra'], krovat: ['C', null], tumbochka: ['E', 'tumba_kra'], trimo: ['F', 'trimo_kra'], chester: ['G', 'chest_kra'], pufik: ['H', null], oyna: ['I', null] };
+  const KOR_COLS2 = ['C', 'D', 'E', 'F', 'G', 'H'];
+  const SARF_KEYS = [['shkaf', 'Shkaf'], ['krovat', 'Krovat'], ['tumbochka', 'Tumbochka'], ['trimo', 'Trimo'], ['chester', 'Chester'], ['pufik', 'Pufik'], ['oyna', 'Stoyka oyna'], ['korpus', 'Korpus buyum']];
+  const fnum = v => { const n = Number(v); return isFinite(n) ? n : 0; };
+  function priceExpr(c) {
+    const p = fnum(c.narx);
+    if (c.tur === 'Dollar') return `${p}*kurs_joriy`;
+    if (c.tur === "So'm (kursga bog'liq)") return `${p}*kurs_joriy/kurs_baza`;
+    return `${p}`;
+  }
+  // variant: 'ikkalasi' | 'laminat' | 'krasheniy'; kra — mahsulotning krasheniy belgisi (1/0)
+  const variantExpr = (variant, kra) => !kra || variant === 'ikkalasi' || !variant ? '1' : variant === 'laminat' ? `(1-${kra})` : kra;
+  function applyXomExtra(out, settings) {
+    const custom = (settings && settings.xomCustom) || [];
+    const deleted = new Set((settings && settings.xomDeleted) || []);
+    // O'chirilgan standart xom ashyo: miqdori 0 (hisobdan chiqadi)
+    for (const key of deleted) {
+      const [sh, row] = key.split('#');
+      const cols = sh === 'Laminat xom ashyo' ? 'EFGHIJKLM' : 'EFGHI';
+      for (const c of cols) out[`${sh}!${c}${row}`] = 0;
+      const name = cell(sh, 'C' + row);
+      if (name) for (let r = 52; r <= 84; r++) if (cell('Korpus hisob', 'A' + r) === name) for (const c of KOR_COLS2) out[`Korpus hisob!${c}${r}`] = 0;
+    }
+    const sp = {}, kor = [];
+    for (const c of custom) {
+      if (c.deleted) continue;
+      const k = `${fnum(c.otx) ? `(1+${fnum(c.otx)})` : '1'}*${priceExpr(c)}`;
+      for (const [key, [col, kra]] of Object.entries(SP_COLS)) {
+        const q = fnum(c.sarf && c.sarf[key]);
+        if (q) (sp[col] ||= []).push(`Tannarx!${col}5*${q}*${k}*${variantExpr(c.variant, kra)}`);
+      }
+      const qk = fnum(c.sarf && c.sarf.korpus);
+      if (qk) kor.push(col => `'Korpus hisob'!${col}7*${qk}*${k}*${variantExpr(c.variant, `'Korpus hisob'!${col}24`)}`);
+    }
+    for (const [col, parts] of Object.entries(sp)) {
+      const f = M.sheets.Tannarx[col + '7'].f;
+      out[`Tannarx!${col}7`] = { f: `(${f})+${parts.join('+')}` };
+    }
+    if (kor.length) for (const col of KOR_COLS2) {
+      const f = M.sheets['Korpus hisob'][col + '87'].f;
+      out[`Korpus hisob!${col}87`] = { f: `(${f})+${kor.map(fn => fn(col)).join('+')}` };
+    }
   }
 
   // To'lov turlari: Tariflar!B29:E29 dagi muddatlar
@@ -139,8 +193,17 @@
     E.clearOverrides();
     const base = settingsCells(settings);
     E.setMany(base);
-    E.setMany(normalize(inputs));
+    const norm = normalize(inputs);
+    for (const r of OSH_ROWS) norm['Oshxona!F' + r] = ''; // qo'lda 1 m narxi endi ishlatilmaydi
+    // Oldindan to'lov: foiz yoki summa (Excel'da summa yozilsa foiz o'rniga shu olinadi)
+    if (inputs._oldMode === 'sum') norm['Buyurtma!B21'] = 0; else norm['Buyurtma!B22'] = '';
+    E.setMany(norm);
     const get = k => E.get(k);
+    // Chegirma summa bilan berilsa — foizga aylantiriladi (jami sotuv chegirmaga bog'liq emas)
+    if (inputs._chegMode === 'sum') {
+      const jami = num(get('Buyurtma!E14')), cs = Number(String(inputs._chegSum ?? '').replace(/\s/g, '')) || 0;
+      E.setMany({ 'Buyurtma!B16': jami > 0 ? Math.min(1, cs / jami) : 0 });
+    }
     const on = { spalniy: get('Buyurtma!B11') === 'Ha', oshxona: get('Buyurtma!B12') === 'Ha', korpus: get('Buyurtma!B13') === 'Ha' };
 
     const lines = [];
@@ -159,11 +222,12 @@
     if (on.korpus) ['Korpus mebel!A40', 'Korpus mebel!A42'].forEach(addW);
     if (on.oshxona) {
       const miss = OSH_ROWS.filter(r => get('Oshxona!B' + r) && get('Oshxona!G' + r) === '').length;
-      if (miss) warnings.push(`Oshxona: ${miss} ta qatorda 1 m narxi topilmadi (narxni qo'lda yozing yoki jadvalga qo'shing)`);
+      if (miss) warnings.push(`Oshxona: ${miss} ta qatorda 1 m narxi topilmadi (Sozlamalar → Oshxona narxlari jadvaliga qo'shing)`);
       if (/^Tan/.test(txt(get('Sozlamalar!C149'))) && !num(get('Sozlamalar!C10'))) warnings.push('Oshxona: Baraka ustamasi 0% (Sozlamalar)');
     }
-    // Usta foizi 0 haqidagi ogohlantirishlar bu yerda kerak emas (usta keyin biriktiriladi)
+    // Excel'ning "usta tanlanmagan" ogohlantirishi o'rniga ilovaning o'zi tekshiradi
     const wf = warnings.filter(w => !/usta tanlanmagan/.test(w));
+    if ((on.spalniy || on.korpus) && !inputs._usta) wf.unshift('Usta tanlanmagan');
 
     const res = {
       on,
@@ -184,6 +248,9 @@
         old: num(get('Tariflar!B33')), qoldiq: num(get('Tariflar!B35')),
       },
       kurs: num(get('Sozlamalar!C8')),
+      chegFoiz: num(get('Buyurtma!B16')),
+      oldUlush: num(get('Tariflar!B34')),
+      ustaFoiz: Number((settings && settings.ustaFoiz) ?? 0) || 0,
       xomAshyo: (on.spalniy ? num(get('Spalniy!D48')) : 0) + (on.korpus ? num(get('Korpus hisob!I87')) : 0),
       warnings: wf,
     };
@@ -198,6 +265,19 @@
       for (const r of E.get('Furnitura!B5:E60')) {
         const q = num(r[3]);
         if (q > 0 && r[1]) ish.furnitura.push({ m: txt(r[0]), nom: txt(r[1]), birlik: txt(r[2]), q: Math.round(q * 100) / 100 });
+      }
+    }
+    // Qo'shimcha xom ashyolar ham ustaning ro'yxatiga
+    const soniSp = { shkaf: 'B', krovat: 'C', tumbochka: 'E', trimo: 'F', chester: 'G', pufik: 'H', oyna: 'I' };
+    for (const c of (settings && settings.xomCustom) || []) {
+      if (c.deleted) continue;
+      for (const [key, label] of SARF_KEYS) {
+        const per = fnum(c.sarf && c.sarf[key]);
+        if (!per) continue;
+        let n = 0;
+        if (key === 'korpus') { if (on.korpus) n = KOR_COLS2.reduce((t, col) => t + num(get(`Korpus hisob!${col}7`)) * num(get(`Korpus hisob!${col}11`)), 0); }
+        else if (on.spalniy) n = num(get('Tannarx!' + soniSp[key] + '5'));
+        if (n > 0) ish.furnitura.push({ m: label, nom: c.name, birlik: c.unit || '', q: Math.round(n * per * 100) / 100 });
       }
     }
     res.ish = ish;
@@ -274,7 +354,7 @@
 
   const api = {
     defaults, compute, normalize, spalniyFields, korpusFields, KOR_COLS, OSH_ROWS, oshxonaLists, tolovTurlari,
-    sozlamalarRows, xomRows, xomName, oshxonaNarxRows, tarifRows, current, isXomKey, NARX_TURI, settingsCells,
+    sozlamalarRows, xomRows, xomName, oshxonaNarxRows, tarifRows, current, isXomKey, NARX_TURI, settingsCells, SARF_KEYS,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   g.KALK = api;

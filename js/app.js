@@ -2,29 +2,27 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, updatePassword, connectAuthEmulator }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, collection, collectionGroup, query, where, onSnapshot,
-  serverTimestamp, writeBatch, runTransaction, arrayUnion, deleteDoc, connectFirestoreEmulator }
+  serverTimestamp, writeBatch, runTransaction, arrayUnion, deleteDoc, deleteField, connectFirestoreEmulator }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import { firebaseConfig, EMU } from './firebase-config.js';
-import { $, $$, esc, uzs, pct, digits, normPhone, fmtPhone, fdate, fdt, todayStr, parseNum, toast, errText, modal, confirmBox, compressImage } from './util.js';
+import { $, esc, uzs, pct, digits, normPhone, fmtPhone, fdate, fdt, todayStr, parseNum, toast, errText, modal, confirmBox, compressImage, phoneField } from './util.js';
 import { mountCalc } from './calc-ui.js';
 import { renderSettings } from './sozlamalar.js';
 import { renderStaff, renderBranches, createStaffAccount } from './xodimlar.js';
-import { downloadPdf } from './pdf.js';
+import { downloadPdf, downloadFinalPdf } from './pdf.js';
+import { renderReport } from './hisobot.js';
+import { renderTopics, unreadTopics } from './muammolar.js';
+import { DEFAULT_ROLES, mergeRoles, can as canP } from './perms.js';
+import { HUDUDLAR, VILOYATLAR, fullAddress } from './hududlar.js';
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 if (EMU) { connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true }); connectFirestoreEmulator(db, '127.0.0.1', 8080); }
-const K = window.KALK;
 
 export const LOGIN_DOMAIN = 'barakamebel.local';
 export const emailFor = (phone, k) => k <= 1 ? `${phone}@${LOGIN_DOMAIN}` : `${phone}+v${k}@${LOGIN_DOMAIN}`;
-const MAX_ALIAS = 6;
-
-export const ROLES = {
-  admin: 'Admin', rahbar: 'Mebel rahbari', sotuvchi: 'Sotuvchi',
-  shartnomachi: 'Shartnomachi', olchovchi: "O'lchovchi", usta: 'Usta',
-};
+const MAX_ALIAS = 8;
 
 // Buyurtma bosqichlari
 export const STAGES = {
@@ -33,7 +31,7 @@ export const STAGES = {
   olchov: { t: "O'lchovda", c: 'gold' },
   olchandi: { t: "O'lchandi — narx tasdig'i", c: 'gold' },
   ustaga: { t: 'Ustaga biriktirish', c: 'warn' },
-  usta_tasdiq: { t: "Usta tasdig'ida", c: 'warn' },
+  usta_tasdiq: { t: "Usta qabul qilishi", c: 'warn' },
   kesish: { t: 'Xom ashyo / kesish', c: 'warn' },
   yigish: { t: "Yig'ilmoqda", c: 'warn' },
   qadoqlash: { t: 'Qadoqlanmoqda', c: 'warn' },
@@ -41,10 +39,10 @@ export const STAGES = {
   yakunlandi: { t: 'Yakunlandi', c: 'ok' },
   bekor: { t: 'Bekor qilindi', c: 'bad' },
 };
-const PROD = ['kesish', 'yigish', 'qadoqlash', 'yetkazish'];
+export const PROD = ['kesish', 'yigish', 'qadoqlash', 'yetkazish'];
 const ACTIVE = s => s !== 'yakunlandi' && s !== 'bekor';
 const stageBadge = s => `<span class="badge ${STAGES[s]?.c || ''}">${esc(STAGES[s]?.t || s)}</span>`;
-function stagePath(o) {
+export function stagePath(o) {
   const p = ['murojaat'];
   if (o.tolovTuri === 'muddatli' || o.stage === 'skoring') p.push('skoring');
   if (o.mebelTuri !== 'tayyor') p.push('olchov', 'olchandi');
@@ -52,25 +50,49 @@ function stagePath(o) {
   return p;
 }
 
+export const YANGI = 'Yangi murojaat';
 const DEF_MAIN = {
   kategoriyalar: ['Spalniy garnitur', 'Prixojka', 'Yumshoq mebel', 'Oshxona mebeli', 'Shkaf / garderob', 'Ofis mebeli', 'Boshqa'],
-  statuslar: ['Narx bilish uchun', 'Mijozning uyi hali bitmagan', "O'ylab ko'radi", "Qayta qo'ng'iroq qilish", 'Buyurtma beradi'],
-  ustaFoizSp: 0, ustaFoizKor: 0,
+  statuslar: [YANGI, 'Narx bilish uchun', 'Mijozning uyi hali bitmagan', "O'ylab ko'radi", "Qayta qo'ng'iroq qilish", 'Buyurtma beradi'],
+  minRasm: 4,
 };
 
 // ---------- Holat ----------
 export const S = {
-  me: null, tab: null, branches: [], staff: [], settings: { main: DEF_MAIN, kalk: {}, xom: {} },
-  orders: [], ordersReady: false, view: null, filter: { q: '', chip: 'faol' }, unsub: [],
+  me: null, tab: null, branches: [], staff: [], roles: mergeRoles(), ustaFoiz: {},
+  settings: { main: DEF_MAIN, kalk: {}, xom: {}, xomCustom: [], xomDeleted: [] },
+  orders: [], ordersReady: false, view: null, filter: { q: '', chip: 'faol' }, unsub: [], topics: [],
 };
-export const ctx = { db, auth, app, S, firebaseConfig, ROLES, rerender: () => go(S.tab) };
-const role = () => S.me?.role;
-const isAdmin = () => role() === 'admin';
-export const calcSettings = () => ({ kalk: S.settings.kalk, xom: S.settings.xom, ustaFoizSp: S.settings.main.ustaFoizSp, ustaFoizKor: S.settings.main.ustaFoizKor });
+export const can = k => canP(S.me, S.roles, S.ownerId, k);
+const isAdmin = () => S.me?.role === 'admin';
+export const isOwner = () => !!S.me && S.me.id === S.ownerId;
+export const ctx = { db, auth, app, S, firebaseConfig, can, isOwner, rerender: () => go(S.tab) };
+export const calcSettings = (ustaFoiz = 0) => ({ kalk: S.settings.kalk, xom: S.settings.xom, xomCustom: S.settings.xomCustom, xomDeleted: S.settings.xomDeleted, ustaFoiz });
 const branchName = id => S.branches.find(b => b.id === id)?.name || '—';
-const staffBy = r => S.staff.filter(p => p.role === r && p.active);
+export const roleName = r => S.roles[r]?.name || r;
+// Faol xodimlar, rolida shu ruxsat bor (admin hisoblanmaydi — masalan ustalar ro'yxati)
+export const staffWith = k => S.staff.filter(p => p.active && !p.deleted && !p.replacedBy && p.role !== 'admin' && S.roles[p.role]?.perms?.[k]);
+const minRasm = () => Math.max(1, Number(S.settings.main.minRasm) || 4);
 const logEntry = m => ({ t: Date.now(), u: S.me.id, n: S.me.fullName || '', m });
 const show = id => ['boot', 'setup', 'login', 'app'].forEach(x => $('#' + x).classList.toggle('hidden', x !== id));
+const dmy = s => s ? s.split('-').reverse().join('.') : '—';
+const daysBetween = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
+// Muddat holati: kechikkan / yaqin / me'yorda
+function muddatInfo(o) {
+  if (!o.muddat) return null;
+  if (o.stage === 'yakunlandi') {
+    const done = o.yetkazildi ? new Date(o.yetkazildi) : null;
+    if (!done) return null;
+    const ds = done.getFullYear() + '-' + String(done.getMonth() + 1).padStart(2, '0') + '-' + String(done.getDate()).padStart(2, '0');
+    const d = daysBetween(ds, o.muddat);
+    return { cls: d < 0 ? 'late' : 'ok', t: d < 0 ? `${-d} kun kechikib bajarildi` : d === 0 ? 'Muddatida bajarildi' : `${d} kun oldin bajarildi` };
+  }
+  if (!ACTIVE(o.stage)) return null;
+  const left = daysBetween(todayStr(), o.muddat);
+  if (left < 0) return { cls: 'late', t: `${-left} kun kechikdi` };
+  if (left <= 2) return { cls: 'soon', t: left === 0 ? 'Bugun topshirish kerak' : `${left} kun qoldi` };
+  return { cls: '', t: `Muddat: ${dmy(o.muddat)}` };
+}
 
 // ---------- Kirish ----------
 let loggingIn = false, setupRunning = false;
@@ -84,7 +106,7 @@ async function loginWithPhone(input, pw) {
       try {
         const cred = await signInWithEmailAndPassword(auth, emailFor(base, k), pw);
         const ps = await getDoc(doc(db, 'profiles', cred.user.uid));
-        if (ps.exists() && ps.data().active) return cred;
+        if (ps.exists() && ps.data().active && !ps.data().deleted) return cred;
         inactive = true; await signOut(auth);
       } catch (e) {
         if (!/invalid-credential|user-not-found|wrong-password|invalid-email|permission-denied/.test(e.code || '')) throw e;
@@ -107,18 +129,20 @@ async function boot() {
       try {
         const ps = await getDoc(doc(db, 'profiles', user.uid));
         const p = ps.exists() ? ps.data() : null;
-        if (!p || !p.active || !ROLES[p.role]) { await signOut(auth); loginError('Bu login faol emas. Admin bilan bog\'laning.'); return; }
+        if (!p || !p.active || p.deleted) { await signOut(auth); loginError('Bu login faol emas. Admin bilan bog\'laning.'); return; }
         S.me = { id: user.uid, ...p };
-        $('#meName').textContent = p.fullName || '';
-        $('#meRole').textContent = ROLES[p.role] + (p.role === 'sotuvchi' && p.branchId ? ' · ' : '');
         show('app');
         $('#page').innerHTML = '<div class="loading">Ma\'lumotlar yuklanmoqda…</div>';
         await loadStatic();
-        if (p.role === 'sotuvchi') $('#meRole').textContent = ROLES[p.role] + ' · ' + branchName(p.branchId);
+        if (isOwner()) await migrate();
+        if (!S.roles[p.role] && p.role !== 'admin') { await signOut(auth); loginError('Sizning rolingiz o\'chirilgan. Admin bilan bog\'laning.'); return; }
+        $('#meName').textContent = p.fullName || '';
+        $('#meRole').textContent = (isOwner() ? 'Tizim egasi' : roleName(p.role)) + (p.branchId && !isAdmin() ? ' · ' + branchName(p.branchId) : '');
         subscribeOrders();
-        S.tab = tabsFor()[0].id;
+        subscribeTopics();
+        S.tab = tabsFor()[0]?.id || 'muammo';
         go(S.tab);
-      } catch (e) { show('login'); loginError(errText(e)); }
+      } catch (e) { console.error(e); show('login'); loginError(errText(e)); }
     });
   } catch (e) {
     $('#bootMsg').innerHTML = `<b style="color:var(--bad)">Serverga ulanib bo'lmadi.</b><br>${esc(errText(e))}<br><br>Internetni tekshirib, sahifani yangilang.`;
@@ -127,84 +151,121 @@ async function boot() {
 function loginError(t) { const e = $('#loginErr'); e.textContent = t; e.classList.remove('hidden'); show('login'); }
 
 export async function loadStatic() {
-  const [br, st, sm, sk, sx] = await Promise.all([
+  const [br, st, sm, sk, sx, sr] = await Promise.all([
     getDocs(collection(db, 'branches')),
     getDocs(collection(db, 'profiles')),
     getDoc(doc(db, 'settings', 'main')),
     getDoc(doc(db, 'settings', 'kalk')),
     getDoc(doc(db, 'settings', 'xom')),
+    getDoc(doc(db, 'settings', 'roles')),
   ]);
   S.branches = br.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   S.staff = st.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.fullName || '').localeCompare(b.fullName || ''));
+  const main = { ...DEF_MAIN, ...(sm.exists() ? sm.data() : {}) };
+  main.statuslar = [YANGI, ...(main.statuslar || []).filter(x => x && x !== YANGI)];
+  const xom = sx.exists() ? sx.data() : {};
   S.settings = {
-    main: { ...DEF_MAIN, ...(sm.exists() ? sm.data() : {}) },
-    kalk: sk.exists() ? (sk.data().cells || {}) : {},
-    xom: sx.exists() ? (sx.data().cells || {}) : {},
+    main, kalk: sk.exists() ? (sk.data().cells || {}) : {},
+    xom: xom.cells || {}, xomCustom: xom.custom || [], xomDeleted: xom.deleted || [],
   };
+  S.rolesRaw = sr.exists() ? (sr.data().roles || {}) : {};
+  S.roles = mergeRoles(S.rolesRaw);
+  const me = S.staff.find(p => p.id === S.me?.id);
+  if (me) S.me = { ...S.me, ...me };
+  // Usta foizlari (faqat ruxsati borlar o'qiy oladi)
+  S.ustaFoiz = {};
+  if (isAdmin() || can('see_usta_foiz') || can('calc') || can('assign_usta') || can('report')) {
+    try { (await getDocs(collection(db, 'ustaFoiz'))).docs.forEach(d => { S.ustaFoiz[d.id] = Number(d.data().foiz) || 0; }); } catch (e) { /* ruxsat yo'q */ }
+  }
+}
+
+// Bir martalik ko'chirish (2-versiya): usta foizi va haqi himoyalangan hujjatlarga
+async function migrate() {
+  try {
+    const m = await getDoc(doc(db, 'meta', 'migr'));
+    if (m.exists() && m.data().v >= 2) return;
+    const b = writeBatch(db);
+    let n = 0;
+    for (const p of S.staff) if (p.ustaFoiz !== undefined) {
+      b.set(doc(db, 'ustaFoiz', p.id), { foiz: Number(p.ustaFoiz) || 0 }); b.update(doc(db, 'profiles', p.id), { ustaFoiz: deleteField() }); n += 2;
+    }
+    const os = await getDocs(collection(db, 'orders'));
+    for (const d of os.docs) {
+      const o = d.data();
+      if (o.ustaHaqi !== undefined || o.ustaFoiz !== undefined) {
+        b.set(doc(db, 'orders', d.id, 'pul', 'main'), { ustaId: o.ustaId || '', ustaHaqi: o.ustaHaqi ?? 0, ustaFoiz: o.ustaFoiz ?? 0 }, { merge: true });
+        if (o.ustaId) { b.set(doc(db, 'orders', d.id, 'usta', 'main'), { ustaId: o.ustaId, haqi: o.ustaHaqi ?? 0 }); n++; }
+        b.update(d.ref, { ustaHaqi: deleteField(), ustaFoiz: deleteField() }); n += 2;
+      }
+      if (n > 400) break;
+    }
+    b.set(doc(db, 'meta', 'migr'), { v: 2, at: Date.now() });
+    await b.commit();
+    if (n) await loadStatic();
+  } catch (e) { console.warn('migratsiya', e); }
 }
 
 function subscribeOrders() {
-  const r = role(), uid = S.me.id;
-  let q;
+  const uid = S.me.id;
   const col = collection(db, 'orders');
-  if (r === 'admin' || r === 'rahbar') q = col;
-  else if (r === 'sotuvchi') q = query(col, where('branchId', '==', S.me.branchId || '-'));
-  else if (r === 'shartnomachi') q = query(col, where('tolovTuri', '==', 'muddatli'));
-  else if (r === 'olchovchi') q = query(col, where('olchovchiId', '==', uid));
-  else if (r === 'usta') q = query(col, where('ustaId', '==', uid));
-  S.ordersReady = false;
-  S.unsub.push(onSnapshot(q, snap => {
+  const qs = [];
+  if (isAdmin() || can('ord_all')) qs.push(col);
+  else {
+    if (can('ord_branch')) qs.push(query(col, where('branchId', '==', S.me.branchId || '-')));
+    if (can('skoring')) qs.push(query(col, where('tolovTuri', '==', 'muddatli')));
+    if (can('olchov')) qs.push(query(col, where('olchovchiId', '==', uid)));
+    if (can('work')) qs.push(query(col, where('ustaId', '==', uid)));
+  }
+  S.ordersReady = !qs.length;
+  const parts = qs.map(() => null);
+  qs.forEach((q, i) => S.unsub.push(onSnapshot(q, snap => {
     const stamp = id => { const o = S.orders.find(x => x.id === id); return o ? (o.updatedAt?.toMillis?.() || 0) + ':' + o.stage : ''; };
     const before = S.view?.type === 'order' ? stamp(S.view.id) : '';
-    S.orders = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => (b.updatedAt?.toMillis?.() || 0) - (a.updatedAt?.toMillis?.() || 0));
+    parts[i] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (parts.some(p => p === null)) return;
+    const map = new Map();
+    parts.flat().forEach(o => map.set(o.id, o));
+    S.orders = [...map.values()].sort((a, b) => (b.updatedAt?.toMillis?.() || 0) - (a.updatedAt?.toMillis?.() || 0));
     S.ordersReady = true;
     renderTabs();
-    if (!S.view) { if (!document.querySelector('.modal-bg') && !['calc', 'staff', 'branches', 'settings'].includes(S.tab)) go(S.tab, true); }
+    if (!S.view) { if (!document.querySelector('.modal-bg') && LIVE_TABS.includes(S.tab)) go(S.tab, true); }
     // Ochiq buyurtma faqat o'zi o'zgarganda qayta chiziladi (yozilayotgan matn yo'qolmasin)
     else if (S.view.type === 'order' && !S.view.editing && stamp(S.view.id) !== before) openOrder(S.view.id, true);
-  }, e => { $('#page').innerHTML = `<div class="err">${esc(errText(e))}</div>`; }));
+  }, e => { $('#page').innerHTML = `<div class="err">${esc(errText(e))}</div>`; })));
+}
+const LIVE_TABS = ['dash', 'orders', 'assign', 'prod', 'skoring', 'olchov', 'work', 'history'];
+
+function subscribeTopics() {
+  S.unsub.push(onSnapshot(collection(db, 'topics'), snap => {
+    S.topics = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
+    renderTabs();
+    if (S.tab === 'muammo' && S.onTopics) S.onTopics();
+  }, () => { /* ruxsat yo'q */ }));
 }
 
-// ---------- Tablar ----------
+// ---------- Tablar (ruxsatlar bo'yicha) ----------
 function tabsFor() {
   const o = S.orders;
   const cnt = f => o.filter(f).length;
-  switch (role()) {
-    case 'admin': return [
-      { id: 'dash', t: 'Bosh sahifa' },
-      { id: 'orders', t: 'Buyurtmalar' },
-      { id: 'calc', t: 'Kalkulyator' },
-      { id: 'staff', t: 'Xodimlar' },
-      { id: 'branches', t: 'Filiallar' },
-      { id: 'settings', t: 'Sozlamalar' },
-    ];
-    case 'rahbar': return [
-      { id: 'assign', t: 'Ustaga biriktirish', n: cnt(x => x.stage === 'ustaga') },
-      { id: 'prod', t: 'Ishlab chiqarish', n: cnt(x => ['usta_tasdiq', ...PROD].includes(x.stage)) },
-      { id: 'orders', t: 'Barcha buyurtmalar' },
-      { id: 'staff', t: 'Ustalar' },
-      { id: 'settings', t: 'Xom ashyo narxlari' },
-      { id: 'calc', t: 'Kalkulyator' },
-    ];
-    case 'sotuvchi': return [
-      { id: 'orders', t: 'Murojaatlar', n: cnt(x => x.stage === 'murojaat' && x.qaytaSana && x.qaytaSana <= todayStr()) + cnt(x => x.stage === 'olchandi') || 0 },
-      { id: 'calc', t: 'Kalkulyator' },
-    ];
-    case 'shartnomachi': return [
-      { id: 'skoring', t: 'Tekshiruv', n: cnt(x => x.stage === 'skoring') },
-      { id: 'orders', t: 'Tarix' },
-    ];
-    case 'olchovchi': return [
-      { id: 'olchov', t: "O'lchovlar", n: cnt(x => x.stage === 'olchov') },
-      { id: 'orders', t: 'Bajarilgan' },
-    ];
-    case 'usta': return [
-      { id: 'work', t: 'Ishlarim', n: cnt(x => ['usta_tasdiq', ...PROD].includes(x.stage)) },
-      { id: 'orders', t: 'Tugallangan' },
-    ];
+  const t = [];
+  const seesOrders = isAdmin() || can('ord_all') || can('ord_branch');
+  if (isAdmin() || can('dash')) t.push({ id: 'dash', t: 'Bosh sahifa' });
+  if (can('assign_usta')) {
+    t.push({ id: 'assign', t: 'Ustaga biriktirish', n: cnt(x => x.stage === 'ustaga') });
+    t.push({ id: 'prod', t: 'Ishlab chiqarish', n: cnt(x => ['usta_tasdiq', ...PROD].includes(x.stage) && muddatInfo(x)?.cls === 'late') });
   }
-  return [];
+  if (seesOrders) t.push({ id: 'orders', t: can('ord_all') || isAdmin() ? 'Buyurtmalar' : 'Murojaatlar', n: cnt(x => (x.stage === 'murojaat' && x.qaytaSana && x.qaytaSana <= todayStr()) || (x.stage === 'olchandi' && !can('ord_all'))) });
+  if (can('skoring') && !isAdmin()) t.push({ id: 'skoring', t: 'Tekshiruv', n: cnt(x => x.stage === 'skoring') });
+  if (can('olchov') && !isAdmin()) t.push({ id: 'olchov', t: "O'lchovlar", n: cnt(x => x.stage === 'olchov' && x.olchovchiId === S.me.id) });
+  if (can('work') && !isAdmin()) t.push({ id: 'work', t: 'Ishlarim', n: cnt(x => ['usta_tasdiq', ...PROD].includes(x.stage) && x.ustaId === S.me.id) });
+  if (!seesOrders && (can('skoring') || can('olchov') || can('work'))) t.push({ id: 'history', t: 'Bajarilgan' });
+  if (can('calc')) t.push({ id: 'calc', t: 'Kalkulyator' });
+  if (isAdmin() || can('report')) t.push({ id: 'report', t: 'Hisobot' });
+  t.push({ id: 'muammo', t: '💬 Muammolar', n: unreadTopics(ctx) });
+  if (isAdmin() || can('add_usta') || can('staff_view')) t.push({ id: 'staff', t: isAdmin() || can('staff_view') ? 'Xodimlar' : 'Ustalar' });
+  if (isAdmin()) t.push({ id: 'branches', t: 'Filiallar' });
+  if (isAdmin() || can('xom_narx')) t.push({ id: 'settings', t: isAdmin() ? 'Sozlamalar' : 'Xom ashyo narxlari' });
+  return t;
 }
 function renderTabs() {
   $('#tabs').innerHTML = tabsFor().map(t => `<button data-tab="${t.id}" class="${S.tab === t.id && !S.view ? 'on' : ''}">${esc(t.t)}${t.n ? `<span class="cnt">${t.n}</span>` : ''}</button>`).join('');
@@ -214,48 +275,50 @@ $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-ta
 function go(tab, soft) {
   if (!S.me) return;
   if (!soft) S.view = null;
+  S.onTopics = null;
   renderTabs();
   const page = $('#page');
-  if (!S.ordersReady && !['calc', 'staff', 'branches', 'settings'].includes(tab)) { page.innerHTML = '<div class="loading">Yuklanmoqda…</div>'; return; }
+  if (!S.ordersReady && LIVE_TABS.includes(tab)) { page.innerHTML = '<div class="loading">Yuklanmoqda…</div>'; return; }
+  const work = ['usta_tasdiq', ...PROD];
   switch (tab) {
     case 'dash': return renderDash(page);
-    case 'orders': return renderOrderList(page, defaultListFilter());
+    case 'orders': return renderOrderList(page, { title: can('ord_all') || isAdmin() ? 'Buyurtmalar' : 'Murojaatlar', chips: true, newBtn: can('ord_create') });
     case 'assign': return renderOrderList(page, { stages: ['ustaga'], title: 'Ustaga biriktirilishi kerak', noChips: true });
-    case 'prod': return renderOrderList(page, { stages: ['usta_tasdiq', ...PROD], title: 'Ishlab chiqarishda', noChips: true, groupByUsta: true });
-    case 'skoring': return renderOrderList(page, { stages: ['skoring'], title: 'Tekshiruv kutilmoqda', noChips: true });
-    case 'olchov': return renderOrderList(page, { stages: ['olchov'], title: "O'lchash kerak", noChips: true });
-    case 'work': return renderOrderList(page, { stages: ['usta_tasdiq', ...PROD], title: 'Mening ishlarim', noChips: true });
+    case 'prod': return renderOrderList(page, { stages: work, title: 'Ishlab chiqarishda', groupByUsta: true, sortMuddat: true });
+    case 'skoring': return renderOrderList(page, { stages: ['skoring'], only: o => o.tolovTuri === 'muddatli', title: 'Tekshiruv kutilmoqda' });
+    case 'olchov': return renderOrderList(page, { stages: ['olchov'], only: o => o.olchovchiId === S.me.id, title: "O'lchash kerak" });
+    case 'work': return renderOrderList(page, { stages: work, only: o => o.ustaId === S.me.id, title: 'Mening ishlarim', sortMuddat: true });
+    case 'history': return renderOrderList(page, { title: 'Bajarilgan ishlar', only: o => !(o.stage === 'skoring' && can('skoring')) && !(o.stage === 'olchov' && o.olchovchiId === S.me.id) && !(work.includes(o.stage) && o.ustaId === S.me.id) });
     case 'calc': return renderCalcPage(page);
+    case 'report': return renderReport(page, ctx);
+    case 'muammo': return renderTopics(page, ctx);
     case 'staff': return renderStaff(page, ctx);
     case 'branches': return renderBranches(page, ctx);
     case 'settings': return renderSettings(page, ctx);
   }
 }
 ctx.go = go;
+ctx.openOrder = id => openOrder(id);
 
-function defaultListFilter() {
-  const r = role();
-  if (r === 'shartnomachi') return { title: 'Tekshirilgan buyurtmalar', exclude: ['skoring'] };
-  if (r === 'olchovchi') return { title: "O'lchangan buyurtmalar", exclude: ['olchov'] };
-  if (r === 'usta') return { title: 'Tugallangan ishlar', stages: ['yakunlandi'] };
-  return { title: r === 'sotuvchi' ? 'Murojaatlar' : 'Buyurtmalar', chips: true, newBtn: r === 'sotuvchi' || r === 'admin' };
-}
-
-// ---------- Bosh sahifa (admin) ----------
+// ---------- Bosh sahifa ----------
 async function renderDash(page) {
   const o = S.orders;
   const by = s => o.filter(x => x.stage === s).length;
+  const late = o.filter(x => muddatInfo(x)?.cls === 'late').length;
   page.innerHTML = `<h2>Bosh sahifa</h2>
+    ${late ? `<button class="note bad" style="width:100%;text-align:left;cursor:pointer" data-late>⚠ <b>${late} ta ish muddatidan kechikmoqda</b> — ko'rish uchun bosing</button>` : ''}
     <div class="stats">
       ${['murojaat', 'skoring', 'olchov', 'olchandi', 'ustaga', 'usta_tasdiq', 'kesish', 'yigish', 'qadoqlash', 'yetkazish', 'yakunlandi', 'bekor']
         .map(s => `<button class="stat" data-st="${s}"><b>${by(s)}</b><span>${esc(STAGES[s].t)}</span></button>`).join('')}
     </div>
-    <h3>Filiallar bo'yicha (faol buyurtmalar)</h3>
-    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Filial</th><th class="r">Murojaat</th><th class="r">Jarayonda</th><th class="r">Yakunlangan</th><th class="r">Bu oy sotuv</th></tr></thead><tbody id="brStats">
+    <h3>Filiallar bo'yicha</h3>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Filial</th><th class="r">Murojaat</th><th class="r">Jarayonda</th><th class="r">Yakunlangan</th><th class="r">Bu oy sotuv</th></tr></thead><tbody>
       ${S.branches.map(b => { const bo = o.filter(x => x.branchId === b.id); return `<tr><td>${esc(b.name)}</td><td class="r">${bo.filter(x => x.stage === 'murojaat').length}</td><td class="r">${bo.filter(x => ACTIVE(x.stage) && x.stage !== 'murojaat').length}</td><td class="r">${bo.filter(x => x.stage === 'yakunlandi').length}</td><td class="r" data-br="${b.id}">…</td></tr>`; }).join('')}
     </tbody></table></div>
     <p class="hint">"Bu oy sotuv" — shu oy rasmiylashtirilgan buyurtmalarning naqd narxi yig'indisi.</p>`;
   page.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { S.tab = 'orders'; S.filter.chip = 'all'; S.filter.stage = b.dataset.st; go('orders'); });
+  const lb = page.querySelector('[data-late]');
+  if (lb) lb.onclick = () => { S.tab = 'orders'; S.filter.chip = 'late'; S.filter.stage = null; go('orders'); };
   try {
     const ms = new Date(); ms.setDate(1); ms.setHours(0, 0, 0, 0);
     const snap = await getDocs(collectionGroup(db, 'pul'));
@@ -270,12 +333,14 @@ async function renderDash(page) {
 function renderOrderList(page, f) {
   let list = S.orders.slice();
   if (f.stages) list = list.filter(x => f.stages.includes(x.stage));
-  if (f.exclude) list = list.filter(x => !f.exclude.includes(x.stage));
+  if (f.only) list = list.filter(f.only);
   const chips = [
     { id: 'faol', t: 'Faol', f: x => ACTIVE(x.stage) },
+    { id: 'yangi', t: 'Yangi', f: x => x.stage === 'murojaat' && (x.status || YANGI) === YANGI },
     { id: 'murojaat', t: 'Murojaatlar', f: x => x.stage === 'murojaat' },
     { id: 'jarayon', t: 'Jarayonda', f: x => ACTIVE(x.stage) && x.stage !== 'murojaat' },
     { id: 'qayta', t: "Bugun qo'ng'iroq", f: x => x.stage === 'murojaat' && x.qaytaSana && x.qaytaSana <= todayStr() },
+    { id: 'late', t: 'Kechikayotgan', f: x => muddatInfo(x)?.cls === 'late' },
     { id: 'yakunlandi', t: 'Yakunlangan', f: x => x.stage === 'yakunlandi' },
     { id: 'bekor', t: 'Bekor', f: x => x.stage === 'bekor' },
     { id: 'all', t: 'Barchasi', f: () => true },
@@ -286,18 +351,23 @@ function renderOrderList(page, f) {
     if (S.filter.stage) list = list.filter(x => x.stage === S.filter.stage);
   }
   const q = S.filter.q.trim().toLowerCase();
-  if (q) list = list.filter(x => [x.client?.name, x.client?.phone, String(x.no), x.kategoriya, x.sellerName].join(' ').toLowerCase().includes(q));
-  if (isAdmin() && S.filter.branch) list = list.filter(x => x.branchId === S.filter.branch);
+  if (q) list = list.filter(x => [x.client?.name, x.client?.phone, String(x.no), x.kategoriya, x.sellerName, x.client?.tuman].join(' ').toLowerCase().includes(q));
+  if ((isAdmin() || can('ord_all')) && S.filter.branch) list = list.filter(x => x.branchId === S.filter.branch);
+  if (f.sortMuddat) list.sort((a, b) => (a.muddat || '9999').localeCompare(b.muddat || '9999'));
+  const seesPhone = !(can('work') && !can('ord_all') && !can('ord_branch') && !isAdmin());
 
   const item = o => {
     const alert = o.stage === 'murojaat' && o.qaytaSana && o.qaytaSana <= todayStr();
-    return `<button class="oitem ${alert ? 'alert' : ''}" data-open="${o.id}">
+    const mi = muddatInfo(o);
+    return `<button class="oitem ${alert || mi?.cls === 'late' ? 'alert' : ''}" data-open="${o.id}">
       <div class="top"><span class="nm">${esc(o.client?.name || 'Nomsiz')}</span>${stageBadge(o.stage)}</div>
       <div class="meta"><span class="no">№${o.no || '—'}</span><span>${esc(o.kategoriya || '')}</span><span>${o.mebelTuri === 'tayyor' ? 'Tayyor' : "Yig'iladigan"}</span>
-        ${role() !== 'usta' ? `<span>${esc(fmtPhone(o.client?.phone))}</span>` : ''}
-        ${role() === 'admin' || role() === 'rahbar' || role() === 'shartnomachi' ? `<span>${esc(branchName(o.branchId))}</span>` : ''}
-        ${o.ustaName && role() !== 'usta' ? `<span>Usta: ${esc(o.ustaName)}</span>` : ''}
-        ${o.stage === 'murojaat' ? `<span>${esc(o.status || '')}${o.qaytaSana ? ' · qayta: ' + esc(o.qaytaSana.split('-').reverse().join('.')) : ''}</span>` : ''}
+        ${seesPhone ? `<span>${esc(fmtPhone(o.client?.phone))}</span>` : ''}
+        ${o.client?.tuman ? `<span>${esc(o.client.tuman)}</span>` : ''}
+        ${isAdmin() || can('ord_all') || can('skoring') ? `<span>${esc(branchName(o.branchId))}</span>` : ''}
+        ${o.ustaName && o.ustaId !== S.me.id ? `<span>Usta: ${esc(o.ustaName)}</span>` : ''}
+        ${mi ? `<span class="badge ${mi.cls}">${esc(mi.t)}</span>` : ''}
+        ${o.stage === 'murojaat' ? `<span>${esc(o.status || YANGI)}${o.qaytaSana ? ' · qayta: ' + esc(dmy(o.qaytaSana)) : ''}</span>` : ''}
         <span>${fdate(o.updatedAt)}</span></div>
     </button>`;
   };
@@ -310,7 +380,7 @@ function renderOrderList(page, f) {
 
   page.innerHTML = `<h2>${esc(f.title)}</h2>
     <div class="toolbar"><input class="inp" id="q" placeholder="Qidirish: ism, telefon, №" value="${esc(S.filter.q)}">
-      ${isAdmin() ? `<select class="inp" id="brf" style="flex:0 1 200px"><option value="">Barcha filiallar</option>${S.branches.map(b => `<option value="${b.id}" ${S.filter.branch === b.id ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select>` : ''}
+      ${(isAdmin() || can('ord_all')) && S.branches.length > 1 ? `<select class="inp" id="brf" style="flex:0 1 200px"><option value="">Barcha filiallar</option>${S.branches.map(b => `<option value="${b.id}" ${S.filter.branch === b.id ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select>` : ''}
       ${f.newBtn ? `<button class="btn pri" id="newOrder">+ Yangi murojaat</button>` : ''}</div>
     ${f.chips ? `<div class="chips">${chips.map(c => `<button class="chip ${S.filter.chip === c.id && !S.filter.stage ? 'on' : ''}" data-chip="${c.id}">${esc(c.t)}</button>`).join('')}
       ${S.filter.stage ? `<button class="chip on" data-chip="${esc(S.filter.chip)}">${esc(STAGES[S.filter.stage]?.t)} ✕</button>` : ''}</div>` : ''}
@@ -334,57 +404,87 @@ async function nextNo() {
   });
 }
 
+const datalist = (id, items) => `<datalist id="${id}">${items.map(x => `<option value="${esc(x)}">`).join('')}</datalist>`;
+function hududHtml(c) {
+  return `<div class="row2">
+    <div class="field"><label>Viloyat</label><input class="inp" name="viloyat" list="dlVil" autocomplete="off" maxlength="60" value="${esc(c.viloyat || '')}" placeholder="Tanlang yoki yozing">${datalist('dlVil', VILOYATLAR)}</div>
+    <div class="field"><label>Tuman / shahar</label><input class="inp" name="tuman" list="dlTum" autocomplete="off" maxlength="60" value="${esc(c.tuman || '')}" placeholder="Tanlang yoki yozing">${datalist('dlTum', HUDUDLAR[c.viloyat] || [])}</div>
+  </div>`;
+}
+export function bindHudud(form) {
+  const v = form.querySelector('[name=viloyat]'), t = form.querySelector('[name=tuman]');
+  if (!v) return;
+  v.addEventListener('change', () => {
+    const list = HUDUDLAR[v.value] || [];
+    form.querySelector('#dlTum').innerHTML = list.map(x => `<option value="${esc(x)}">`).join('');
+    if (t.value && !list.includes(t.value)) t.value = '';
+  });
+}
+export { hududHtml };
+
 function clientFormHtml(o = {}) {
   const m = S.settings.main;
+  const isNew = !o.id;
+  const br = S.branches.find(b => b.id === (o.branchId || S.me.branchId)) || (isAdmin() ? S.branches[0] : null);
+  const c = o.client || { viloyat: br?.viloyat || '', tuman: br?.tuman || '' };
+  const statuses = m.statuslar.includes(o.status) || !o.status ? m.statuslar : [o.status, ...m.statuslar];
   return `
-    <div class="field"><label>Mijoz ismi *</label><input class="inp" name="name" required maxlength="80" value="${esc(o.client?.name || '')}"></div>
-    <div class="field"><label>Telefon raqami *</label><input class="inp" name="phone" inputmode="tel" required placeholder="90 123 45 67" value="${esc(o.client?.phone ? fmtPhone(o.client.phone) : '')}"></div>
-    <div class="field"><label>Manzil</label><input class="inp" name="address" maxlength="200" value="${esc(o.client?.address || '')}"></div>
+    <div class="field"><label>Mijoz ismi *</label><input class="inp" name="name" required maxlength="80" value="${esc(c.name || '')}"></div>
+    <div class="field"><label>Telefon raqami *</label>${phoneField('phone', c.phone, 'required')}</div>
+    ${hududHtml(c)}
+    <div class="field"><label>Manzil (ko'cha, uy, mo'ljal)</label><input class="inp" name="address" maxlength="200" value="${esc(c.address || '')}"></div>
     <div class="row2">
       <div class="field"><label>Mebel turi *</label><select class="inp" name="mebelTuri"><option value="yigiladigan" ${o.mebelTuri !== 'tayyor' ? 'selected' : ''}>Yig'iladigan (o'lchov bilan)</option><option value="tayyor" ${o.mebelTuri === 'tayyor' ? 'selected' : ''}>Tayyor mebel</option></select></div>
       <div class="field"><label>Kategoriya *</label><select class="inp" name="kategoriya">${m.kategoriyalar.map(k => `<option ${k === o.kategoriya ? 'selected' : ''}>${esc(k)}</option>`).join('')}</select></div>
     </div>
     <div class="row2">
-      <div class="field"><label>Murojaat statusi</label><select class="inp" name="status">${m.statuslar.map(k => `<option ${k === o.status ? 'selected' : ''}>${esc(k)}</option>`).join('')}</select></div>
+      ${isNew ? '' : `<div class="field"><label>Murojaat statusi</label><select class="inp" name="status">${statuses.map(k => `<option ${k === (o.status || YANGI) ? 'selected' : ''}>${esc(k)}</option>`).join('')}</select></div>`}
       <div class="field"><label>Qayta murojaat sanasi</label><input class="inp" type="date" name="qaytaSana" value="${esc(o.qaytaSana || '')}"></div>
     </div>
-    ${isAdmin() && !o.id ? `<div class="field"><label>Filial</label><select class="inp" name="branchId">${S.branches.filter(b => b.active !== false).map(b => `<option value="${b.id}">${esc(b.name)}</option>`).join('')}</select></div>` : ''}
+    ${isAdmin() && isNew && S.branches.length > 1 ? `<div class="field"><label>Filial</label><select class="inp" name="branchId">${S.branches.filter(b => b.active !== false).map(b => `<option value="${b.id}">${esc(b.name)}</option>`).join('')}</select></div>` : ''}
     <div class="field"><label>Izoh</label><textarea class="inp" name="izoh" maxlength="1000">${esc(o.izoh || '')}</textarea></div>`;
 }
 function readClientForm(form) {
   const fd = new FormData(form);
   const phone = normPhone(fd.get('phone'));
-  if (phone.length < 9) throw new Error("Telefon raqamini to'liq kiriting");
-  return {
-    client: { name: String(fd.get('name')).trim(), phone, address: String(fd.get('address') || '').trim() },
-    mebelTuri: fd.get('mebelTuri'), kategoriya: fd.get('kategoriya'), status: fd.get('status'),
+  if (phone.length !== 12) throw new Error("Telefon raqamini to'liq kiriting (9 ta raqam)");
+  const d = {
+    client: { name: String(fd.get('name')).trim(), phone, viloyat: String(fd.get('viloyat') || '').trim(), tuman: String(fd.get('tuman') || '').trim(), address: String(fd.get('address') || '').trim() },
+    mebelTuri: fd.get('mebelTuri'), kategoriya: fd.get('kategoriya'),
     qaytaSana: fd.get('qaytaSana') || '', izoh: String(fd.get('izoh') || '').trim(),
     _branchId: fd.get('branchId'),
   };
+  if (fd.has('status')) d.status = fd.get('status');
+  return d;
 }
 
 function newOrderForm(prefill) {
   const m = modal(`<h2>Yangi murojaat</h2><form id="nf">${clientFormHtml()}<div class="err hidden" id="nfErr"></div><button class="btn pri block">Saqlash</button></form>`);
   const form = m.el.querySelector('#nf');
+  bindHudud(form);
+  const brSel = form.querySelector('[name=branchId]');
+  if (brSel) brSel.onchange = () => { const b = S.branches.find(x => x.id === brSel.value); if (b) { form.viloyat.value = b.viloyat || ''; form.tuman.value = b.tuman || ''; form.viloyat.dispatchEvent(new Event('change')); form.tuman.value = b.tuman || ''; } };
   form.onsubmit = async e => {
     e.preventDefault();
-    const btn = form.querySelector('button'); btn.disabled = true;
+    const btn = form.querySelector('button.pri'); btn.disabled = true;
     try {
       const d = readClientForm(form);
-      const branchId = role() === 'sotuvchi' ? S.me.branchId : (d._branchId || S.branches[0]?.id);
-      if (!branchId) throw new Error('Avval filial qo\'shing');
+      const branchId = isAdmin() ? (d._branchId || S.branches[0]?.id) : S.me.branchId;
+      if (!branchId) throw new Error("Avval filial qo'shing yoki xodimga filial biriktiring");
       delete d._branchId;
       const no = await nextNo();
       const ref = doc(collection(db, 'orders'));
       const b = writeBatch(db);
+      const now = Date.now();
       b.set(ref, {
-        ...d, no, branchId, sellerId: S.me.id, sellerName: S.me.fullName || '', stage: 'murojaat', tolovTuri: '', hasCalc: false,
-        ish: null, olchovchiId: '', olchovchiName: '', ustaId: '', ustaName: '',
-        log: [logEntry('Murojaat yaratildi')], createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+        ...d, status: YANGI, no, branchId, sellerId: S.me.id, sellerName: S.me.fullName || '', stage: 'murojaat', tolovTuri: '', hasCalc: false,
+        ish: null, olchovchiId: '', olchovchiName: '', ustaId: '', ustaName: '', taklifUstaId: '', taklifUstaName: '',
+        stageAt: { murojaat: now }, log: [logEntry('Murojaat yaratildi')], createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
       if (prefill) {
+        const u = ustaInfo(prefill.inputs._usta);
         b.set(doc(db, 'orders', ref.id, 'pul', 'main'), pulDoc(prefill.inputs, prefill.result, branchId, S.me.id));
-        b.update(ref, { hasCalc: true, ish: prefill.result.ish });
+        b.update(ref, { hasCalc: true, ish: prefill.result.ish, taklifUstaId: u?.id || '', taklifUstaName: u?.name || '' });
       }
       await b.commit();
       m.close(); toast('Murojaat saqlandi'); openOrder(ref.id);
@@ -392,9 +492,14 @@ function newOrderForm(prefill) {
   };
 }
 
-function pulDoc(inputs, result, branchId, sellerId) {
+const ustaInfo = id => { const p = S.staff.find(x => x.id === id); return p ? { id: p.id, name: p.fullName, foiz: S.ustaFoiz[p.id] || 0 } : null; };
+const ustaOptions = () => staffWith('work').map(p => ({ id: p.id, name: p.fullName + (p.mutaxassislik ? ' · ' + p.mutaxassislik : ''), foiz: S.ustaFoiz[p.id] || 0 }));
+
+function pulDoc(inputs, result, branchId, sellerId, prev) {
   const { ish, ...res } = result;
-  return { inputs, result: res, ustaBaza: result.ustaBaza || 0, branchId, sellerId, calcAt: Date.now(), calcBy: S.me.fullName || '' };
+  const d = { inputs, result: res, ustaBaza: result.ustaBaza || 0, planFoiz: result.ustaFoiz || 0, planUstaId: inputs._usta || '', branchId, sellerId, calcAt: Date.now(), calcBy: S.me.fullName || '' };
+  if (prev) for (const k of ['skoring', 'ustaHaqi', 'ustaFoiz', 'ustaId', 'narxTarix']) if (prev[k] !== undefined) d[k] = prev[k];
+  return d;
 }
 
 // ---------- Buyurtma kartochkasi ----------
@@ -403,10 +508,9 @@ async function openOrder(id, soft) {
   const page = $('#page');
   S.view = { type: 'order', id };
   renderTabs();
-  if (!o) { page.innerHTML = '<div class="empty">Buyurtma topilmadi</div>'; return; }
-  const canPul = ['admin', 'rahbar', 'sotuvchi', 'shartnomachi'].includes(role());
+  if (!o) { page.innerHTML = '<div class="empty">Buyurtma topilmadi yoki uni ko\'rishga ruxsatingiz yo\'q</div>'; return; }
   let pul = null;
-  if (canPul) {
+  if (isAdmin() || can('ord_all') || can('ord_branch') || can('skoring') || can('assign_usta') || can('report')) {
     try { const s = await getDoc(doc(db, 'orders', id, 'pul', 'main')); pul = s.exists() ? s.data() : null; } catch (e) { pul = null; }
   }
   if (S.view?.id !== id) return;
@@ -415,6 +519,10 @@ async function openOrder(id, soft) {
   bindOrder(page, o, pul);
   window.scrollTo(0, scrollY);
   loadPhotos(o);
+  const uc = $('#ustaHaqiCard');
+  if (uc) getDoc(doc(db, 'orders', id, 'usta', 'main')).then(s => { if (s.exists()) uc.innerHTML = `· haqingiz <b>${uzs(s.data().haqi)}</b>`; }).catch(() => {});
+  const uh = $('#ustaHaqiMe');
+  if (uh) getDoc(doc(db, 'orders', id, 'usta', 'main')).then(s => { uh.innerHTML = s.exists() ? `Sizning haqingiz: <b>${uzs(s.data().haqi)}</b>` : ''; }).catch(() => { uh.textContent = ''; });
 }
 
 function stepsHtml(o) {
@@ -430,13 +538,16 @@ function linesHtml(lines, withPrice) {
   </tbody></table></div>`;
 }
 
+const seesMoney = () => isAdmin() || can('ord_all') || can('ord_branch') || can('skoring');
+const seesFoiz = () => isOwner() || can('see_usta_foiz');
+
 function moneyHtml(o, pul) {
-  if (!pul?.result) return '';
+  if (!pul?.result || !seesMoney()) return '';
   const r = pul.result, t = r.tanlangan;
   const sk = pul.skoring;
   return `<div class="card"><h3>Narx va to'lov</h3>
     ${linesHtml(r.lines, true)}
-    ${['admin', 'rahbar'].includes(role()) ? `<div class="note">Tan narx: <b>${uzs(r.tan)}</b> · Ustama: <b>${uzs(r.ustama)}</b> · Xom ashyo: ${uzs(r.xomAshyo)}</div>` : ''}
+    ${isAdmin() || can('see_cost') ? `<div class="note">Tan narx: <b>${uzs(r.tan)}</b> · Ustama: <b>${uzs(r.ustama)}</b> · Xom ashyo: ${uzs(r.xomAshyo)}</div>` : ''}
     <div class="total"><div><div class="s">Naqd narx${r.chegirma ? ` (chegirma ${uzs(r.chegirma)})` : ''}</div><div class="big-num">${uzs(r.naqd)}</div></div>
       ${t.oy ? `<div><div class="s">${esc(t.turi)} · oldindan ${uzs(t.old)}</div><div class="big-num">${uzs(t.oylik)}<span class="s"> / oy</span></div><div class="s">Jami: ${uzs(t.jami)} · Qoldiq (kredit): ${uzs(t.qoldiq)}</div></div>` : '<div><div class="s">To\'lov</div><div class="big-num">Naqd</div></div>'}</div>
     ${sk ? `<div class="note ${sk.qaror === 'tasdiq' ? 'ok' : 'bad'}"><b>Shartnomachi: ${sk.qaror === 'tasdiq' ? 'Shartnoma chiqarilsin' : 'Bekor qilindi'}</b> · limit ${uzs(sk.limit)}${sk.izoh ? ' · ' + esc(sk.izoh) : ''}<div class="hint">${esc(sk.byName || '')}, ${fdt(sk.at)}</div></div>` : ''}
@@ -456,96 +567,125 @@ function ishHtml(o) {
   </div>`;
 }
 
+const sellerOk = o => isAdmin() || (can('ord_edit') && (can('ord_all') || o.branchId === S.me.branchId));
+const pdfReady = (o, pul) => (isAdmin() || can('pdf')) && pul?.result && o.stage !== 'bekor' && pul.skoring?.qaror !== 'bekor';
+
 function orderHtml(o, pul) {
-  const r = role(), me = S.me.id;
-  const own = r === 'sotuvchi' || isAdmin();
-  const showClientPhone = r !== 'usta';
+  const workerOnly = !isAdmin() && !can('ord_all') && !can('ord_branch') && !can('skoring');
   const actions = actionsHtml(o, pul);
+  const mi = muddatInfo(o);
+  const showPas = (isAdmin() || can('pasport_view') || can('pasport_upload')) && o.tolovTuri === 'muddatli' && o.stage !== 'murojaat';
+  const pasEdit = (isAdmin() || can('pasport_upload')) && sellerOk(o) && o.stage === 'skoring';
   return `
     <button class="btn sec sm" id="back">← Ro'yxatga</button>
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin:14px 0 6px;flex-wrap:wrap">
-      <h2 style="margin:0">${esc(o.client?.name || '')} <span class="no">№${o.no}</span></h2>${stageBadge(o.stage)}
+      <h2 style="margin:0">${esc(o.client?.name || '')} <span class="no">№${o.no}</span></h2><div>${mi ? `<span class="badge ${mi.cls}">${esc(mi.t)}</span> ` : ''}${stageBadge(o.stage)}</div>
     </div>
     ${o.stage !== 'bekor' ? stepsHtml(o) : ''}
     ${actions ? `<div class="card" style="border-color:var(--g);border-width:2px">${actions}</div>` : ''}
     <div class="card"><h3>Mijoz</h3><div class="kv">
-      ${showClientPhone ? `<div class="k">Telefon</div><div class="v"><a href="tel:+${esc(o.client?.phone)}">${esc(fmtPhone(o.client?.phone))}</a></div>` : ''}
-      <div class="k">Manzil</div><div class="v">${esc(o.client?.address || '—')}</div>
+      ${!(workerOnly && can('work')) ? `<div class="k">Telefon</div><div class="v"><a href="tel:+${esc(o.client?.phone)}">${esc(fmtPhone(o.client?.phone))}</a></div>` : ''}
+      <div class="k">Manzil</div><div class="v">${esc(fullAddress(o.client) || '—')}</div>
       <div class="k">Mebel turi</div><div class="v">${o.mebelTuri === 'tayyor' ? 'Tayyor mebel' : "Yig'iladigan"}</div>
       <div class="k">Kategoriya</div><div class="v">${esc(o.kategoriya || '—')}</div>
-      ${r !== 'usta' && r !== 'olchovchi' ? `<div class="k">Status</div><div class="v">${esc(o.status || '—')}</div>
-      <div class="k">Qayta murojaat</div><div class="v">${o.qaytaSana ? esc(o.qaytaSana.split('-').reverse().join('.')) : '—'}</div>` : ''}
+      ${!workerOnly ? `<div class="k">Status</div><div class="v">${esc(o.status || YANGI)}</div>
+      <div class="k">Qayta murojaat</div><div class="v">${esc(dmy(o.qaytaSana))}</div>` : ''}
       <div class="k">Filial</div><div class="v">${esc(branchName(o.branchId))}</div>
       <div class="k">Sotuvchi</div><div class="v">${esc(o.sellerName || '—')}</div>
-      ${o.tolovTuri && !['usta', 'olchovchi'].includes(r) ? `<div class="k">To'lov</div><div class="v">${o.tolovTuri === 'muddatli' ? "Muddatli to'lov" : 'Naqd'}</div>` : ''}
+      ${o.tolovTuri && !workerOnly ? `<div class="k">To'lov</div><div class="v">${o.tolovTuri === 'muddatli' ? "Muddatli to'lov" : 'Naqd'}</div>` : ''}
       ${o.olchovchiName ? `<div class="k">O'lchovchi</div><div class="v">${esc(o.olchovchiName)}</div>` : ''}
-      ${o.ustaName ? `<div class="k">Usta</div><div class="v">${esc(o.ustaName)}${['admin', 'rahbar', 'usta'].includes(r) && o.ustaHaqi != null ? ` · usta haqi <b>${uzs(o.ustaHaqi)}</b> (${pct(o.ustaFoiz)})` : ''}</div>` : ''}
+      ${o.ustaName || o.taklifUstaName ? `<div class="k">Usta</div><div class="v">${esc(o.ustaName || o.taklifUstaName)}${!o.ustaName ? ' <span class="hint">(sotuvchi taklifi)</span>' : ''}${seesFoiz() && pul?.ustaHaqi != null ? ` · usta haqi <b>${uzs(pul.ustaHaqi)}</b> (${pct(pul.ustaFoiz)})` : ''}${o.ustaId === S.me.id ? ' <span id="ustaHaqiCard"></span>' : ''}</div>` : ''}
+      ${o.muddat ? `<div class="k">Yakunlash muddati</div><div class="v">${esc(dmy(o.muddat))}${mi ? ` · <span class="${mi.cls}">${esc(mi.t)}</span>` : ''}</div>` : ''}
       ${o.izoh ? `<div class="k">Izoh</div><div class="v" style="white-space:pre-wrap">${esc(o.izoh)}</div>` : ''}
       ${o.bekorSabab ? `<div class="k">Bekor sababi</div><div class="v">${esc(o.bekorSabab)}</div>` : ''}
     </div>
-    ${(own && o.stage === 'murojaat' && (r !== 'sotuvchi' || o.sellerId === me || o.branchId === S.me.branchId)) || isAdmin() ? `<button class="btn sec sm" id="editClient" style="margin-top:10px">Tahrirlash</button>` : ''}
+    ${sellerOk(o) && (o.stage === 'murojaat' || isAdmin()) ? `<button class="btn sec sm" id="editClient" style="margin-top:10px">Tahrirlash</button>` : ''}
     </div>
     ${moneyHtml(o, pul)}
     ${o.olchov ? `<div class="card"><h3>O'lchov natijasi</h3><div style="white-space:pre-wrap">${esc(o.olchov.izoh || '')}</div><p class="hint">${esc(o.olchov.n || '')}, ${fdt(o.olchov.t)}</p><div class="photos" id="ph-olchov"></div></div>` : ''}
-    ${['usta', 'rahbar', 'admin', 'olchovchi'].includes(r) || (r === 'sotuvchi' && !pul) ? ishHtml(o) : ''}
-    ${['admin', 'sotuvchi', 'shartnomachi'].includes(r) && o.tolovTuri === 'muddatli' && o.stage !== 'murojaat' ? `<div class="card"><h3>Pasport</h3><div class="pp" id="ph-pasport"><span class="muted">Yuklanmoqda…</span></div></div>` : ''}
+    ${workerOnly || can('assign_usta') || isAdmin() ? ishHtml(o) : ''}
+    ${showPas ? `<div class="card"><h3>Pasport</h3>${pasEdit ? '<div class="pp" id="ppUp"></div>' : '<div class="pp" id="ph-pasport"><span class="muted">Yuklanmoqda…</span></div>'}</div>` : ''}
     ${o.stage === 'yakunlandi' ? `<div class="card"><h3>Yetkazib berish rasmlari</h3><div class="photos" id="ph-yetkazish"></div></div>` : ''}
-    ${isAdmin() ? `<div class="card"><h3>Admin</h3><div class="row2"><select class="inp" id="admStage">${Object.keys(STAGES).map(s => `<option value="${s}" ${s === o.stage ? 'selected' : ''}>${esc(STAGES[s].t)}</option>`).join('')}</select><button class="btn sec" id="admStageBtn">Bosqichni o'zgartirish</button></div><p class="hint">Faqat xatoni tuzatish uchun.</p></div>` : ''}
-    ${r !== 'usta' && r !== 'olchovchi' ? `<div class="card"><h3>Tarix</h3><ul class="log">${(o.log || []).slice().reverse().map(l => `<li>${esc(l.m)}<div class="t">${esc(l.n)}, ${fdt(l.t)}</div></li>`).join('')}</ul></div>` : ''}`;
+    ${isAdmin() ? `<div class="card"><h3>Admin</h3>
+      <div class="row2"><select class="inp" id="admStage">${Object.keys(STAGES).map(s => `<option value="${s}" ${s === o.stage ? 'selected' : ''}>${esc(STAGES[s].t)}</option>`).join('')}</select><button class="btn sec" id="admStageBtn">Bosqichni o'zgartirish</button></div>
+      ${o.muddat && ACTIVE(o.stage) ? `<button class="btn sec sm" id="admMuddat" style="margin-top:10px">Yakunlash muddatini o'zgartirish</button>` : ''}
+      <p class="hint">Faqat xatoni tuzatish uchun. Har bir o'zgarish tarixga yoziladi.</p></div>` : ''}
+    ${!workerOnly ? `<div class="card"><h3>Tarix</h3><ul class="log">${(o.log || []).slice().reverse().map(l => `<li>${esc(l.m)}<div class="t">${esc(l.n)}, ${fdt(l.t)}</div></li>`).join('')}</ul></div>` : ''}`;
 }
+
+const photoCounter = (id, n) => `<div class="hint" id="${id}" style="margin:6px 0 0">Rasmlar: <span class="${n >= minRasm() ? 'cnt-ok' : 'cnt-no'}">${n} / ${minRasm()}</span></div>`;
 
 // Har bir rol uchun shu bosqichdagi asosiy amallar
 function actionsHtml(o, pul) {
-  const r = role(), me = S.me.id, adm = isAdmin();
+  const me = S.me.id, adm = isAdmin();
   const st = o.stage;
-  const sellerOk = adm || (r === 'sotuvchi' && o.branchId === S.me.branchId);
-  const pdfOk = pul?.result && (o.tolovTuri ? (o.tolovTuri === 'naqd' || pul.skoring?.qaror === 'tasdiq') : pul.result.tanlangan.oy === 0);
-  const pdfBtn = (sellerOk || r === 'rahbar') && pdfOk && st !== 'bekor' ? `<button class="btn gold" data-a="pdf">⬇ PDF yuklab olish</button>` : '';
-  if (st === 'murojaat' && sellerOk) {
-    return `<h3 style="margin-top:0">Keyingi qadam</h3>
-      <div class="row2"><button class="btn ${pul ? 'sec' : 'pri'}" data-a="calc">${pul ? 'Narxni qayta hisoblash' : 'Narx hisoblash'}</button>
-      ${pul ? `<button class="btn pri" data-a="formal">Rasmiylashtirish →</button>` : ''}${pdfBtn}</div>
-      <button class="btn sec sm" data-a="cancel" style="margin-top:10px">Murojaatni bekor qilish</button>`;
+  const pdfBtns = [
+    pdfReady(o, pul) ? `<button class="btn gold" data-a="pdf">⬇ PDF narx taklifi</button>` : '',
+    st === 'yakunlandi' && (adm || can('final_pdf')) ? `<button class="btn gold" data-a="finalpdf">⬇ Yakuniy PDF</button>` : '',
+  ].join('');
+  const blocks = [];
+  const wait = t => blocks.push(`<p class="muted" style="margin:0">⏳ ${t}</p>`);
+  if (st === 'murojaat' && sellerOk(o)) {
+    blocks.push(`<h3 style="margin-top:0">Keyingi qadam</h3>
+      <div class="row2">${can('calc') || adm ? `<button class="btn ${pul ? 'sec' : 'pri'}" data-a="calc">${pul ? 'Narxni qayta hisoblash' : 'Narx hisoblash'}</button>` : ''}
+      ${pul ? `<button class="btn pri" data-a="formal">Rasmiylashtirish →</button>` : ''}</div>
+      ${adm || can('ord_cancel') ? `<button class="btn sec sm" data-a="cancel" style="margin-top:10px">Murojaatni bekor qilish</button>` : ''}`);
   }
-  if (st === 'skoring' && (r === 'shartnomachi' || adm)) {
-    const t = pul?.result?.tanlangan;
-    return `<h3 style="margin-top:0">Shartnoma qarori</h3>
-      ${pul?.skoring ? `<div class="note">Qayta tekshiruv: narx o'zgargan. Avvalgi limit ${uzs(pul.skoring.limit)}.</div>` : ''}
-      <p>Kredit summasi (qoldiq): <b>${uzs(t?.qoldiq)}</b> · ${esc(t?.turi || '')}</p>
-      <div class="field"><label>Summa limiti, so'm</label><input class="inp" id="skLimit" inputmode="numeric" value="${esc(pul?.skoring?.limit || t?.qoldiq || '')}"></div>
-      <div class="field"><label>Izoh</label><input class="inp" id="skIzoh" maxlength="300"></div>
-      <div class="row2"><button class="btn green" data-a="sk-ok">✓ Shartnoma chiqarilsin</button><button class="btn red" data-a="sk-no">✕ Shartnoma bekor qilinsin</button></div>`;
+  if (st === 'skoring') {
+    if (adm || can('skoring')) {
+      const t = pul?.result?.tanlangan;
+      blocks.push(`<h3 style="margin-top:0">Shartnoma qarori</h3>
+        ${pul?.skoring ? `<div class="note">Qayta tekshiruv: narx o'zgargan. Avvalgi limit ${uzs(pul.skoring.limit)}.</div>` : ''}
+        <div id="pasNote"></div>
+        <p>Kredit summasi (qoldiq): <b>${uzs(t?.qoldiq)}</b> · ${esc(t?.turi || '')}</p>
+        <div class="field"><label>Summa limiti, so'm</label><input class="inp" id="skLimit" inputmode="numeric" data-money value="${esc(String(pul?.skoring?.limit || t?.qoldiq || '').replace(/\B(?=(\d{3})+(?!\d))/g, ' '))}"></div>
+        <div class="field"><label>Izoh</label><input class="inp" id="skIzoh" maxlength="300"></div>
+        <div class="row2"><button class="btn green" data-a="sk-ok">✓ Shartnoma chiqarilsin</button><button class="btn red" data-a="sk-no">✕ Shartnoma bekor qilinsin</button></div>`);
+    } else wait('Shartnomachi qarorini kutmoqda');
   }
-  if (st === 'olchov' && (r === 'olchovchi' && o.olchovchiId === me || adm)) {
-    return `<h3 style="margin-top:0">O'lchov</h3>
-      <div class="field"><label>Rasmlar (joyi, devorlar, burchaklar)</label><div class="photos" id="olchovUp"></div></div>
-      <div class="field"><label>Aniq o'lchamlar va izoh *</label><textarea class="inp" id="olchovIzoh" maxlength="3000" placeholder="Masalan: devor uzunligi 320 sm, shift 270 sm, chap tomonda rozetka...">${esc(o.olchovDraft || '')}</textarea></div>
-      <button class="btn pri block" data-a="olchandi">O'lchandi ✓</button>`;
+  if (st === 'olchov') {
+    if ((can('olchov') && o.olchovchiId === me) || adm) {
+      blocks.push(`<h3 style="margin-top:0">O'lchov${adm && o.olchovchiId !== me ? ` <span class="hint">(${esc(o.olchovchiName)} nomidan)</span>` : ''}</h3>
+        <div class="field"><label>Rasmlar (joyi, devorlar, burchaklar) — kamida ${minRasm()} ta</label><div class="photos" id="olchovUp"></div>${photoCounter('olCnt', 0)}</div>
+        <div class="field"><label>Aniq o'lchamlar va izoh *</label><textarea class="inp" id="olchovIzoh" maxlength="3000" placeholder="Masalan: devor uzunligi 320 sm, shift 270 sm, chap tomonda rozetka..."></textarea></div>
+        <button class="btn pri block" data-a="olchandi">O'lchandi ✓</button>`);
+    } else wait(`O'lchovchi ${esc(o.olchovchiName || '')} o'lchashini kutmoqda`);
+    if (sellerOk(o) && !adm) blocks.push(`<button class="btn sec sm" data-a="olchovchi" style="margin-top:8px">O'lchovchini almashtirish</button>`);
   }
-  if (st === 'olchov' && sellerOk) {
-    return `<p>O'lchovchi: <b>${esc(o.olchovchiName || '—')}</b></p><button class="btn sec" data-a="olchovchi">O'lchovchini almashtirish</button>${pdfBtn}`;
-  }
-  if (st === 'olchandi' && sellerOk) {
-    return `<h3 style="margin-top:0">O'lchov keldi — narxni tekshiring</h3>
+  if (st === 'olchandi') {
+    if (sellerOk(o)) blocks.push(`<h3 style="margin-top:0">O'lchov keldi — narxni tekshiring</h3>
       <p class="hint">Aniq o'lcham bo'yicha narx o'zgarsa, qayta hisoblang va sababini yozing.</p>
-      <div class="row2"><button class="btn sec" data-a="calc">Narxni qayta hisoblash</button><button class="btn pri" data-a="toUsta">Ustaga yuborish →</button>${pdfBtn}</div>`;
+      <div class="row2">${can('calc') || adm ? `<button class="btn sec" data-a="calc">Narxni qayta hisoblash</button>` : ''}<button class="btn pri" data-a="toUsta">Ustaga yuborish →</button></div>`);
+    else wait('Sotuvchi narxni tasdiqlashini kutmoqda');
   }
-  if ((st === 'ustaga' || st === 'usta_tasdiq') && (r === 'rahbar' || adm)) {
-    const ustalar = staffBy('usta');
-    return `<h3 style="margin-top:0">${st === 'ustaga' ? 'Ustaga biriktirish' : 'Ustani almashtirish'}</h3>
-      <div class="field"><select class="inp" id="ustaSel"><option value="">— usta tanlang —</option>${ustalar.map(u => `<option value="${u.id}" ${u.id === o.ustaId ? 'selected' : ''}>${esc(u.fullName)} · ${pct(u.ustaFoiz || 0)}${u.mutaxassislik ? ' · ' + esc(u.mutaxassislik) : ''}</option>`).join('')}</select></div>
-      <div id="ustaHaqiPrev" class="hint"></div>
-      <button class="btn pri block" data-a="assign">Biriktirish</button>${pdfBtn}`;
+  if (st === 'ustaga' || st === 'usta_tasdiq') {
+    if (adm || can('assign_usta')) {
+      const ustalar = staffWith('work');
+      const sel = o.ustaId || o.taklifUstaId;
+      blocks.push(`<h3 style="margin-top:0">${st === 'ustaga' ? 'Ustaga biriktirish' : 'Ustani almashtirish'}</h3>
+        ${o.taklifUstaName && st === 'ustaga' ? `<p class="hint" style="margin-top:-4px">Sotuvchi tanlagan usta: <b>${esc(o.taklifUstaName)}</b></p>` : ''}
+        <div class="field"><select class="inp" id="ustaSel"><option value="">— usta tanlang —</option>${ustalar.map(u => `<option value="${u.id}" ${u.id === sel ? 'selected' : ''}>${esc(u.fullName)}${u.mutaxassislik ? ' · ' + esc(u.mutaxassislik) : ''}</option>`).join('')}</select></div>
+        <div id="ustaHaqiPrev" class="hint"></div>
+        <button class="btn pri block" data-a="assign">${st === 'ustaga' ? 'Tasdiqlash va biriktirish' : 'Almashtirish'}</button>`);
+    } else if (st === 'ustaga') wait('Mebel rahbari ustani biriktirishini kutmoqda');
   }
-  if (o.ustaId === me || (adm && PROD.concat('usta_tasdiq').includes(st))) {
-    if (st === 'usta_tasdiq') return `<h3 style="margin-top:0">Yangi ish</h3><p>Usta haqi: <b>${uzs(o.ustaHaqi)}</b> (${pct(o.ustaFoiz)})</p><button class="btn green block" data-a="u-ok">Narxni tasdiqlayman ✓</button>`;
-    if (st === 'kesish') return `<button class="btn pri block" data-a="u-next">✓ Xom ashyo olib kelindi va kesildi</button>`;
-    if (st === 'yigish') return `<button class="btn pri block" data-a="u-next">✓ Yig'ish tugadi</button>`;
-    if (st === 'qadoqlash') return `<button class="btn pri block" data-a="u-next">✓ Qadoqlandi</button>`;
-    if (st === 'yetkazish') return `<h3 style="margin-top:0">Mijozga yetkazib berish</h3><p class="hint">O'rnatilgan mebelning rasmini yuklang (kamida 1 ta).</p><div class="photos" id="yetkUp"></div><button class="btn green block" data-a="delivered" style="margin-top:12px">Mijozga yetkazib berildi ✓</button>`;
+  if (['usta_tasdiq', ...PROD].includes(st)) {
+    const mine = o.ustaId === me && can('work');
+    const nom = adm && !mine ? ` <span class="hint">(${esc(o.ustaName)} nomidan)</span>` : '';
+    if (mine || adm) {
+      if (st === 'usta_tasdiq') blocks.push(`<h3 style="margin-top:0">Yangi ish${nom}</h3>
+        <p id="ustaHaqiMe" class="muted">Usta haqi yuklanmoqda…</p>
+        <div class="field"><label>Ishni yakunlash sanasi *</label><input class="inp" type="date" id="muddatIn" min="${todayStr()}"><div class="hint">Sanani keyin o'zgartirib bo'lmaydi, diqqat bilan tanlang.</div></div>
+        <button class="btn green block" data-a="u-ok">Ishni qabul qilaman ✓</button>`);
+      if (st === 'kesish') blocks.push(`<h3 style="margin-top:0">Ish jarayoni${nom}</h3><button class="btn pri block" data-a="u-next">✓ Xom ashyo olib kelindi va kesildi</button>`);
+      if (st === 'yigish') blocks.push(`<h3 style="margin-top:0">Ish jarayoni${nom}</h3><button class="btn pri block" data-a="u-next">✓ Yig'ish tugadi</button>`);
+      if (st === 'qadoqlash') blocks.push(`<h3 style="margin-top:0">Ish jarayoni${nom}</h3><button class="btn pri block" data-a="u-next">✓ Qadoqlandi</button>`);
+      if (st === 'yetkazish') blocks.push(`<h3 style="margin-top:0">Mijozga yetkazib berish${nom}</h3><p class="hint">O'rnatilgan mebelning rasmlarini yuklang (kamida ${minRasm()} ta).</p><div class="photos" id="yetkUp"></div>${photoCounter('yeCnt', 0)}<button class="btn green block" data-a="delivered" style="margin-top:12px">Mijozga yetkazib berildi ✓</button>`);
+    } else if (st === 'usta_tasdiq') wait(`Usta ${esc(o.ustaName || '')} ishni qabul qilishini kutmoqda`);
+    else wait(`Usta ${esc(o.ustaName || '')} ishlamoqda: ${esc(STAGES[st].t)}`);
   }
-  if (pdfBtn) return `<div class="row2">${pdfBtn}</div>`;
-  return '';
+  if (pdfBtns) blocks.push(`<div class="row2" style="margin-top:${blocks.length ? 12 : 0}px">${pdfBtns}</div>`);
+  return blocks.join('');
 }
 
 function bindOrder(page, o, pul) {
@@ -555,9 +695,12 @@ function bindOrder(page, o, pul) {
     try { await f(b); } catch (e) { toast(errText(e), true); if (e?.code) console.error(e); }
     b.disabled = false;
   });
+  // Bosqich o'zgarsa, uning vaqti stageAt ga yoziladi (yakuniy hisobot uchun)
   const upd = async (fields, msg, extra) => {
     const b = writeBatch(db);
-    b.update(doc(db, 'orders', o.id), { ...fields, updatedAt: serverTimestamp(), log: arrayUnion(logEntry(msg)) });
+    const f = { ...fields, updatedAt: serverTimestamp(), log: arrayUnion(logEntry(msg)) };
+    if (fields.stage && fields.stage !== o.stage) f['stageAt.' + fields.stage] = Date.now();
+    b.update(doc(db, 'orders', o.id), f);
     if (extra) extra(b);
     await b.commit();
     toast(msg);
@@ -565,6 +708,7 @@ function bindOrder(page, o, pul) {
   $('#editClient') && ($('#editClient').onclick = () => {
     const m = modal(`<h2>Murojaatni tahrirlash</h2><form id="ef">${clientFormHtml(o)}<div class="err hidden" id="efErr"></div><button class="btn pri block">Saqlash</button></form>`);
     const form = m.el.querySelector('#ef');
+    bindHudud(form);
     form.onsubmit = async e => {
       e.preventDefault();
       try {
@@ -576,12 +720,13 @@ function bindOrder(page, o, pul) {
   });
   on('calc', () => openCalcForOrder(o, pul));
   on('pdf', () => downloadPdf(o, pul, S, branchName(o.branchId)));
+  on('finalpdf', () => downloadFinalPdf(o, S, ctx));
   on('cancel', async () => {
     const m = modal(`<h2>Murojaatni bekor qilish</h2><div class="field"><label>Sababi *</label><input class="inp" id="cs" maxlength="300"></div><button class="btn red block" id="csb">Bekor qilish</button>`);
     m.el.querySelector('#csb').onclick = async () => {
       const s = m.el.querySelector('#cs').value.trim();
       if (!s) { toast('Sababini yozing', true); return; }
-      await upd({ stage: 'bekor', bekorSabab: s }, 'Murojaat bekor qilindi: ' + s); m.close();
+      try { await upd({ stage: 'bekor', bekorSabab: s }, 'Murojaat bekor qilindi: ' + s); m.close(); } catch (e) { toast(errText(e), true); }
     };
   });
   on('formal', () => formalize(o, pul, upd));
@@ -589,12 +734,17 @@ function bindOrder(page, o, pul) {
   // Shartnomachi
   on('sk-ok', () => skoringDecide(o, pul, 'tasdiq'));
   on('sk-no', () => skoringDecide(o, pul, 'bekor'));
+  // Pasportni keyinroq qo'shish (shartnomachida turganda)
+  if ($('#ppUp')) pasportUploader($('#ppUp'), o);
   // O'lchovchi
-  if ($('#olchovUp')) photoUploader($('#olchovUp'), o, 'olchov');
+  let olN = 0, yeN = 0;
+  const setCnt = (id, n) => { const el = $('#' + id); if (el) el.outerHTML = photoCounter(id, n); };
+  if ($('#olchovUp')) photoUploader($('#olchovUp'), o, 'olchov', n => { olN = n; setCnt('olCnt', n); });
   on('olchandi', async () => {
     const iz = $('#olchovIzoh').value.trim();
+    if (olN < minRasm()) throw new Error(`Kamida ${minRasm()} ta rasm yuklang (hozir ${olN} ta)`);
     if (!iz) throw new Error("O'lchamlarni yozing");
-    await upd({ stage: 'olchandi', olchov: { izoh: iz, t: Date.now(), n: S.me.fullName || '', u: S.me.id } }, "O'lchandi");
+    await upd({ stage: 'olchandi', olchov: { izoh: iz, t: Date.now(), n: S.me.fullName || '', u: o.olchovchiId === S.me.id ? S.me.id : o.olchovchiId } }, `O'lchandi (${olN} ta rasm)`);
   });
   // Sotuvchi: o'lchovdan keyin
   on('toUsta', async () => {
@@ -610,28 +760,45 @@ function bindOrder(page, o, pul) {
   const sel = $('#ustaSel');
   if (sel) {
     const prev = () => {
-      const u = S.staff.find(x => x.id === sel.value);
-      $('#ustaHaqiPrev').innerHTML = u ? `Usta haqi: <b>${uzs((pul?.ustaBaza || 0) * (u.ustaFoiz || 0))}</b> (${pct(u.ustaFoiz || 0)} × xom ashyo)` : '';
+      const u = ustaInfo(sel.value);
+      const box = $('#ustaHaqiPrev');
+      if (!u || !seesFoiz()) { box.innerHTML = ''; return; }
+      const haqi = Math.round((pul?.ustaBaza || 0) * u.foiz);
+      const plan = Math.round((pul?.ustaBaza || 0) * (pul?.planFoiz || 0));
+      box.innerHTML = `Usta haqi: <b>${uzs(haqi)}</b> (${pct(u.foiz)})${haqi > plan && plan ? `<div class="note bad" style="margin-top:6px">Bu usta foizi narx hisoblangan ustanikidan yuqori — Baraka foydasi ${uzs(haqi - plan)} kamayadi. Mijoz narxi o'zgarmaydi.</div>` : ''}`;
     };
     sel.onchange = prev; prev();
   }
   on('assign', async () => {
-    const u = S.staff.find(x => x.id === sel.value);
+    const u = ustaInfo(sel.value);
     if (!u) throw new Error('Usta tanlang');
-    const haqi = Math.round((pul?.ustaBaza || 0) * (u.ustaFoiz || 0));
-    await upd({ stage: 'usta_tasdiq', ustaId: u.id, ustaName: u.fullName, ustaFoiz: u.ustaFoiz || 0, ustaHaqi: haqi }, `Usta biriktirildi: ${u.fullName}`);
+    const haqi = Math.round((pul?.ustaBaza || 0) * u.foiz);
+    await upd({ stage: 'usta_tasdiq', ustaId: u.id, ustaName: S.staff.find(x => x.id === u.id)?.fullName || u.name },
+      o.ustaId && o.ustaId !== u.id ? `Usta almashtirildi: ${o.ustaName} → ${u.name}` : `Usta biriktirildi: ${u.name}`,
+      b => {
+        b.set(doc(db, 'orders', o.id, 'pul', 'main'), { ustaId: u.id, ustaHaqi: haqi, ustaFoiz: u.foiz }, { merge: true });
+        b.set(doc(db, 'orders', o.id, 'usta', 'main'), { ustaId: u.id, haqi }); // usta o'z haqini ko'radi
+      });
   });
-  // Usta
-  on('u-ok', () => upd({ stage: 'kesish' }, 'Usta narxni tasdiqladi'));
+  // Usta (yoki admin usta nomidan)
+  const nomidan = o.ustaId !== S.me.id ? ` (${S.me.fullName} usta ${o.ustaName} nomidan)` : '';
+  on('u-ok', async () => {
+    const d = $('#muddatIn').value;
+    if (!d) throw new Error('Ishni yakunlash sanasini tanlang');
+    if (d < todayStr()) throw new Error("O'tgan sanani tanlab bo'lmaydi");
+    if (!await confirmBox(`Ishni <b>${dmy(d)}</b> gacha yakunlaysizmi? Sanani keyin o'zgartirib bo'lmaydi.`, 'Ha, qabul qilaman')) return;
+    await upd({ stage: 'kesish', muddat: d }, `Usta ishni qabul qildi, muddat: ${dmy(d)}${nomidan}`);
+  });
   on('u-next', () => {
     const nx = { kesish: ['yigish', 'Xom ashyo keltirildi va kesildi'], yigish: ['qadoqlash', "Yig'ish tugadi"], qadoqlash: ['yetkazish', 'Qadoqlandi'] }[o.stage];
-    return upd({ stage: nx[0] }, nx[1]);
+    return upd({ stage: nx[0] }, nx[1] + nomidan);
   });
-  if ($('#yetkUp')) photoUploader($('#yetkUp'), o, 'yetkazish');
+  if ($('#yetkUp')) photoUploader($('#yetkUp'), o, 'yetkazish', n => { yeN = n; setCnt('yeCnt', n); });
   on('delivered', async () => {
-    const n = $('#yetkUp').querySelectorAll('.ph').length;
-    if (!n) throw new Error('Kamida 1 ta rasm yuklang');
-    await upd({ stage: 'yakunlandi', yetkazildi: Date.now() }, `Mijozga yetkazib berildi (${n} ta rasm)`);
+    if (yeN < minRasm()) throw new Error(`Kamida ${minRasm()} ta rasm yuklang (hozir ${yeN} ta)`);
+    const now = Date.now();
+    const mi = muddatInfo({ ...o, stage: 'yakunlandi', yetkazildi: now });
+    await upd({ stage: 'yakunlandi', yetkazildi: now }, `Mijozga yetkazib berildi (${yeN} ta rasm)${mi ? ' — ' + mi.t : ''}${nomidan}`);
   });
   // Admin
   $('#admStageBtn') && ($('#admStageBtn').onclick = async () => {
@@ -640,6 +807,16 @@ function bindOrder(page, o, pul) {
     if (!await confirmBox(`Bosqichni "${STAGES[s].t}" ga o'zgartirasizmi?`, "O'zgartirish")) return;
     try { await upd({ stage: s }, `Admin bosqichni o'zgartirdi: ${STAGES[o.stage]?.t} → ${STAGES[s].t}`); } catch (e) { toast(errText(e), true); }
   });
+  $('#admMuddat') && ($('#admMuddat').onclick = () => {
+    const m = modal(`<h2>Yakunlash muddati</h2><p class="muted">Hozirgi: ${esc(dmy(o.muddat))}</p>
+      <div class="field"><label>Yangi sana</label><input class="inp" type="date" id="nm" value="${esc(o.muddat)}"></div>
+      <div class="field"><label>Sababi *</label><input class="inp" id="nmz" maxlength="300"></div><button class="btn pri block" id="nmb">Saqlash</button>`);
+    m.el.querySelector('#nmb').onclick = async () => {
+      const d = m.el.querySelector('#nm').value, z = m.el.querySelector('#nmz').value.trim();
+      if (!d || !z) { toast('Sana va sababini yozing', true); return; }
+      try { await upd({ muddat: d }, `Admin muddatni o'zgartirdi: ${dmy(o.muddat)} → ${dmy(d)} (${z})`); m.close(); } catch (e) { toast(errText(e), true); }
+    };
+  });
 }
 
 // ---------- Rasmiylashtirish (sotuvchi) ----------
@@ -647,41 +824,44 @@ async function formalize(o, pul, upd) {
   const t = pul.result.tanlangan;
   const muddatli = t.oy > 0;
   const needOl = o.mebelTuri !== 'tayyor';
-  const ol = staffBy('olchovchi');
+  const ol = staffWith('olchov');
   const m = modal(`<h2>Rasmiylashtirish</h2>
     <div class="note">To'lov: <b>${muddatli ? esc(t.turi) + " muddatli to'lov" : 'Naqd'}</b> · naqd narx ${uzs(pul.result.naqd)}${muddatli ? `<br>Oylik ${uzs(t.oylik)}, oldindan ${uzs(t.old)}` : ''}<div class="hint">To'lov turini o'zgartirish uchun narxni qayta hisoblang.</div></div>
-    ${muddatli ? `<h3>Pasport rasmlari (2 tomoni)</h3><div class="pp" id="ppUp"></div>` : ''}
+    ${muddatli && (isAdmin() || can('pasport_upload')) ? `<h3>Pasport rasmlari <span class="hint">(ixtiyoriy)</span></h3><div class="pp" id="ppUp"></div><p class="hint">Rasm hozir bo'lmasa, keyinroq ham qo'shish mumkin.</p>` : ''}
     ${needOl ? `<h3>O'lchovchi</h3><select class="inp" id="olSel"><option value="">— tanlang —</option>${ol.map(u => `<option value="${u.id}" ${u.id === o.olchovchiId ? 'selected' : ''}>${esc(u.fullName)}</option>`).join('')}</select>` : ''}
     <div class="err hidden" id="fmErr"></div>
-    <button class="btn pri block" id="fmBtn" style="margin-top:16px">${muddatli ? 'Shartnomachiga yuborish' : needOl ? "O'lchovga yuborish" : 'Ustaga yuborish'} →</button>`, { wide: true });
-  if (muddatli) pasportUploader(m.el.querySelector('#ppUp'), o);
-  m.el.querySelector('#fmBtn').onclick = async () => {
+    <button class="btn pri block" id="fmBtn" style="margin-top:16px">${muddatli ? 'Shartnomachiga yuborish' : needOl ? "O'lchovga yuborish" : 'Ustaga yuborish'} →</button>
+    ${muddatli ? `<button class="btn sec block hidden" id="fmSkip" style="margin-top:8px">Rasmsiz davom etish →</button>` : ''}`, { wide: true });
+  const pp = m.el.querySelector('#ppUp');
+  const sides = () => pp ? [...pp.querySelectorAll('[data-side]')].filter(x => x.dataset.has === '1').length : 0;
+  if (pp) pasportUploader(pp, o, () => { const sk = m.el.querySelector('#fmSkip'); if (sk) sk.classList.toggle('hidden', sides() === 2); m.el.querySelector('#fmBtn').classList.toggle('hidden', sides() < 2 && muddatli); });
+  const go2 = async () => {
     const err = m.el.querySelector('#fmErr'); err.classList.add('hidden');
     try {
       const fields = { tolovTuri: muddatli ? 'muddatli' : 'naqd', formalAt: Date.now() };
-      if (muddatli) {
-        const sides = [...m.el.querySelectorAll('#ppUp [data-side]')].filter(x => x.dataset.has === '1').length;
-        if (sides < 2) throw new Error("Pasportning ikkala tomoni rasmini yuklang");
-      }
       if (needOl) {
         const u = S.staff.find(x => x.id === m.el.querySelector('#olSel').value);
         if (!u) throw new Error("O'lchovchini tanlang");
         fields.olchovchiId = u.id; fields.olchovchiName = u.fullName;
       }
       fields.stage = muddatli ? 'skoring' : needOl ? 'olchov' : 'ustaga';
-      await upd(fields, `Rasmiylashtirildi: ${muddatli ? t.turi + ' muddatli' : 'naqd'} → ${STAGES[fields.stage].t}`);
+      const ps = sides();
+      await upd(fields, `Rasmiylashtirildi: ${muddatli ? t.turi + ' muddatli' : 'naqd'} → ${STAGES[fields.stage].t}${muddatli ? (ps === 2 ? ' (pasport bilan)' : ps ? ' (pasportning 1 tomoni)' : ' (pasportsiz)') : ''}`);
       m.close();
     } catch (e) { err.textContent = errText(e); err.classList.remove('hidden'); }
   };
+  m.el.querySelector('#fmBtn').onclick = go2;
+  const skip = m.el.querySelector('#fmSkip');
+  if (skip) skip.onclick = go2;
 }
 
 function pickOlchovchi(o, upd) {
-  const ol = staffBy('olchovchi');
+  const ol = staffWith('olchov');
   const m = modal(`<h2>O'lchovchi</h2><select class="inp" id="olSel">${ol.map(u => `<option value="${u.id}" ${u.id === o.olchovchiId ? 'selected' : ''}>${esc(u.fullName)}</option>`).join('')}</select><button class="btn pri block" id="olBtn" style="margin-top:12px">Saqlash</button>`);
   m.el.querySelector('#olBtn').onclick = async () => {
     const u = S.staff.find(x => x.id === m.el.querySelector('#olSel').value);
     if (!u) return;
-    await upd({ olchovchiId: u.id, olchovchiName: u.fullName }, `O'lchovchi: ${u.fullName}`); m.close();
+    try { await upd({ olchovchiId: u.id, olchovchiName: u.fullName }, `O'lchovchi: ${u.fullName}`); m.close(); } catch (e) { toast(errText(e), true); }
   };
 }
 
@@ -695,7 +875,7 @@ async function skoringDecide(o, pul, qaror) {
   const b = writeBatch(db);
   b.update(doc(db, 'orders', o.id, 'pul', 'main'), { skoring: { limit, qaror, izoh, by: S.me.id, byName: S.me.fullName || '', at: Date.now() } });
   b.update(doc(db, 'orders', o.id), {
-    stage: next, updatedAt: serverTimestamp(), ...(qaror === 'bekor' ? { bekorSabab: 'Shartnomachi: ' + izoh } : {}),
+    stage: next, updatedAt: serverTimestamp(), ['stageAt.' + next]: Date.now(), ...(qaror === 'bekor' ? { bekorSabab: 'Shartnomachi: ' + izoh } : {}),
     log: arrayUnion(logEntry(qaror === 'tasdiq' ? `Shartnoma chiqarilsin (limit ${uzs(limit)})` : `Shartnoma bekor qilindi: ${izoh}`)),
   });
   await b.commit();
@@ -712,13 +892,16 @@ function openCalcForOrder(o, pul) {
     <div class="res-bar"><div class="in"><div class="price"><b id="rbPrice">—</b><span id="rbSub"></span></div>
       <button class="btn pri" id="saveCalc">Saqlash</button></div></div>`;
   $('#back').onclick = () => { S.view = { type: 'order', id: o.id }; openOrder(o.id); };
+  const inputs = { ...(pul?.inputs || {}) };
+  if (!inputs._usta && o.taklifUstaId) inputs._usta = o.taklifUstaId;
   const c = mountCalc($('#calcRoot'), {
-    inputs: pul?.inputs, settings: calcSettings(), showTan: ['admin', 'rahbar'].includes(role()),
+    inputs, settings: calcSettings(), ustalar: ustaOptions(), showTan: isAdmin() || can('see_cost'), canDiscount: isAdmin() || can('discount'),
     onChange: r => { $('#rbPrice').textContent = r ? uzs(r.naqd) : '—'; $('#rbSub').textContent = r && r.tanlangan.oy ? `${r.tanlangan.turi}: ${uzs(r.tanlangan.oylik)} / oy` : 'Naqd'; },
   });
   $('#saveCalc').onclick = async () => {
     const r = c.getResult();
     if (!r || !r.naqd) { toast("Narx 0 — mahsulot qo'shing", true); return; }
+    if ((r.on.spalniy || r.on.korpus) && !c.ustaId()) { toast('Ustani tanlang', true); return; }
     let izoh = '';
     const old = pul?.result?.naqd;
     const needReason = old && Math.round(old) !== Math.round(r.naqd) && o.stage !== 'murojaat';
@@ -735,13 +918,13 @@ function openCalcForOrder(o, pul) {
     $('#saveCalc').disabled = true;
     try {
       const b = writeBatch(db);
-      const pd = pulDoc(c.getInputs(), r, o.branchId, o.sellerId);
-      if (pul?.skoring) pd.skoring = pul.skoring;
+      const pd = pulDoc(c.getInputs(), r, o.branchId, o.sellerId, pul);
       pd.narxTarix = pul?.narxTarix || [];
       if (needReason) pd.narxTarix = [...pd.narxTarix, { eski: old, yangi: r.naqd, izoh, t: Date.now(), n: S.me.fullName || '' }];
       b.set(doc(db, 'orders', o.id, 'pul', 'main'), pd);
       const msg = !old ? `Narx hisoblandi: ${uzs(r.naqd)}` : Math.round(old) === Math.round(r.naqd) ? 'Hisob yangilandi (narx o\'zgarmadi)' : `Narx o'zgardi: ${uzs(old)} → ${uzs(r.naqd)}${izoh ? ' (' + izoh + ')' : ''}`;
-      b.update(doc(db, 'orders', o.id), { hasCalc: true, ish: r.ish, updatedAt: serverTimestamp(), log: arrayUnion(logEntry(msg)) });
+      const u = ustaInfo(c.ustaId());
+      b.update(doc(db, 'orders', o.id), { hasCalc: true, ish: r.ish, taklifUstaId: u?.id || '', taklifUstaName: u?.name || '', updatedAt: serverTimestamp(), log: arrayUnion(logEntry(msg)) });
       await b.commit();
       toast('Saqlandi');
       S.view = { type: 'order', id: o.id };
@@ -754,21 +937,28 @@ function openCalcForOrder(o, pul) {
 function renderCalcPage(page) {
   page.innerHTML = `<h2>Kalkulyator</h2><p class="hint" style="margin-top:-6px">Tezkor narx hisoblash. Mijoz rozi bo'lsa, shu hisob bilan murojaat oching.</p><div id="calcRoot"></div>
     <div class="res-bar"><div class="in"><div class="price"><b id="rbPrice">—</b><span id="rbSub"></span></div>
-    ${['sotuvchi', 'admin'].includes(role()) ? `<button class="btn pri" id="toOrder">Murojaat ochish</button>` : ''}</div></div>`;
-  const c = mountCalc($('#calcRoot'), {
-    inputs: S.calcDraft, settings: calcSettings(), showTan: ['admin', 'rahbar'].includes(role()),
-    onChange: r => { S.calcDraft = c ? c.getInputs() : S.calcDraft; $('#rbPrice').textContent = r ? uzs(r.naqd) : '—'; $('#rbSub').textContent = r && r.tanlangan.oy ? `${r.tanlangan.turi}: ${uzs(r.tanlangan.oylik)} / oy` : 'Naqd'; },
+    ${isAdmin() || can('pdf') ? `<button class="btn gold" id="calcPdf">⬇ PDF</button>` : ''}
+    ${isAdmin() || can('ord_create') ? `<button class="btn pri" id="toOrder">Murojaat ochish</button>` : ''}</div></div>`;
+  let c = null;
+  c = mountCalc($('#calcRoot'), {
+    inputs: S.calcDraft, settings: calcSettings(), ustalar: ustaOptions(), showTan: isAdmin() || can('see_cost'), canDiscount: isAdmin() || can('discount'),
+    onChange: r => { if (c) S.calcDraft = c.getInputs(); $('#rbPrice').textContent = r ? uzs(r.naqd) : '—'; $('#rbSub').textContent = r && r.tanlangan.oy ? `${r.tanlangan.turi}: ${uzs(r.tanlangan.oylik)} / oy` : 'Naqd'; },
   });
   $('#toOrder') && ($('#toOrder').onclick = () => {
     const r = c.getResult();
     if (!r || !r.naqd) { toast("Narx 0 — mahsulot qo'shing", true); return; }
+    if ((r.on.spalniy || r.on.korpus) && !c.ustaId()) { toast('Ustani tanlang', true); return; }
     newOrderForm({ inputs: c.getInputs(), result: r });
+  });
+  $('#calcPdf') && ($('#calcPdf').onclick = async () => {
+    const r = c.getResult();
+    if (!r || !r.naqd) { toast("Narx 0 — mahsulot qo'shing", true); return; }
+    try { await downloadPdf({ no: '—', client: { name: '' }, sellerName: S.me.fullName, mebelTuri: 'yigiladigan' }, { result: r }, S, branchName(S.me.branchId)); } catch (e) { toast(errText(e), true); }
   });
 }
 
 // ---------- Rasmlar ----------
 async function loadPhotos(o) {
-  const r = role();
   const wants = [];
   if ($('#ph-olchov')) wants.push(['olchov', $('#ph-olchov')]);
   if ($('#ph-yetkazish')) wants.push(['yetkazish', $('#ph-yetkazish')]);
@@ -780,15 +970,22 @@ async function loadPhotos(o) {
     } catch (e) { el.innerHTML = `<span class="muted">${esc(errText(e))}</span>`; }
   }
   const pp = $('#ph-pasport');
-  if (pp) {
+  const note = $('#pasNote');
+  if (pp || note) {
     try {
-      const cons = [where('orderId', '==', o.id), where('kind', '==', 'pasport')];
-      if (r === 'sotuvchi') cons.push(where('branchId', '==', S.me.branchId));
-      const s = await getDocs(query(collection(db, 'photos'), ...cons));
-      pp.innerHTML = ['oldi', 'orqa'].map(side => { const d = s.docs.find(x => x.data().side === side); return `<div class="slot">${side === 'oldi' ? 'Old tomoni' : 'Orqa tomoni'}${d ? `<a href="#" data-img="${d.id}"><img src="${d.data().data}" alt=""></a>` : '<span class="muted">yo\'q</span>'}</div>`; }).join('');
-      bindZoom(pp, s.docs);
-    } catch (e) { pp.innerHTML = `<span class="muted">${esc(errText(e))}</span>`; }
+      const s = await pasportDocs(o);
+      if (pp) {
+        pp.innerHTML = ['oldi', 'orqa'].map(side => { const d = s.find(x => x.data().side === side); return `<div class="slot">${side === 'oldi' ? 'Old tomoni' : 'Orqa tomoni'}${d ? `<a href="#" data-img="${d.id}"><img src="${d.data().data}" alt=""></a>` : '<span class="muted">yuklanmagan</span>'}</div>`; }).join('');
+        bindZoom(pp, s);
+      }
+      if (note && s.length < 2) note.innerHTML = `<div class="note">⚠ Pasport rasmi ${s.length ? 'faqat bir tomoni' : ''} yuklanmagan${s.length ? '' : ''}.</div>`;
+    } catch (e) { if (pp) pp.innerHTML = `<span class="muted">${esc(errText(e))}</span>`; }
   }
+}
+async function pasportDocs(o) {
+  const cons = [where('orderId', '==', o.id), where('kind', '==', 'pasport')];
+  if (!isAdmin() && !can('ord_all') && !can('skoring')) cons.push(where('branchId', '==', S.me.branchId || '-'));
+  return (await getDocs(query(collection(db, 'photos'), ...cons))).docs;
 }
 function bindZoom(el, docs) {
   el.querySelectorAll('[data-img]').forEach(a => a.onclick = e => {
@@ -804,17 +1001,18 @@ async function savePhoto(o, kind, data, side) {
   return ref.id;
 }
 
-// Ko'p rasm yuklash (o'lchov, yetkazish)
-async function photoUploader(el, o, kind) {
+// Ko'p rasm yuklash (o'lchov, yetkazish). onCount(n) — yuklangan rasmlar soni
+async function photoUploader(el, o, kind, onCount) {
   let docs = [];
   const draw = () => {
     el.innerHTML = docs.map(d => `<div class="ph"><img src="${d.data}" alt=""><button data-del="${d.id}" title="O'chirish">×</button></div>`).join('') +
-      `<label class="upl"><input type="file" accept="image/*" multiple capture="environment"><span style="font-size:26px">＋</span>Rasm qo'shish</label>`;
+      `<label class="upl"><input type="file" accept="image/*" multiple><span style="font-size:26px">＋</span>Rasm qo'shish</label>`;
+    onCount && onCount(docs.length);
     el.querySelector('input').onchange = async e => {
       const files = [...e.target.files];
       const lbl = el.querySelector('.upl'); lbl.innerHTML = 'Yuklanmoqda…';
       for (const f of files) {
-        try { const data = await compressImage(f); const id = await savePhoto(o, kind, data); docs.push({ id, data }); }
+        try { const data = await compressImage(f, 1400, 260000); const id = await savePhoto(o, kind, data); docs.push({ id, data }); }
         catch (er) { toast(errText(er), true); }
       }
       draw();
@@ -831,24 +1029,20 @@ async function photoUploader(el, o, kind) {
   draw();
 }
 
-// Pasport: ikki tomon
-async function pasportUploader(el, o) {
+// Pasport: ikki tomon (ixtiyoriy). onChange — rasm qo'shilganda
+async function pasportUploader(el, o, onChange) {
   const cur = { oldi: null, orqa: null };
-  try {
-    const cons = [where('orderId', '==', o.id), where('kind', '==', 'pasport')];
-    if (role() === 'sotuvchi') cons.push(where('branchId', '==', S.me.branchId));
-    const s = await getDocs(query(collection(db, 'photos'), ...cons));
-    s.docs.forEach(d => { cur[d.data().side] = { id: d.id, data: d.data().data }; });
-  } catch (e) { /* bo'sh */ }
+  try { (await pasportDocs(o)).forEach(d => { cur[d.data().side] = { id: d.id, data: d.data().data }; }); } catch (e) { /* bo'sh */ }
   const draw = () => {
     el.innerHTML = ['oldi', 'orqa'].map(side => `<div class="slot" data-side="${side}" data-has="${cur[side] ? 1 : 0}">${side === 'oldi' ? 'Old tomoni' : 'Orqa tomoni'}
       ${cur[side] ? `<div class="ph" style="aspect-ratio:3/2;border-radius:10px;overflow:hidden;position:relative"><img src="${cur[side].data}" alt=""><button class="btn sec sm" data-re="${side}" style="position:absolute;bottom:6px;right:6px">Almashtirish</button></div>`
-        : `<label class="upl"><input type="file" accept="image/*" capture="environment" data-up="${side}"><span style="font-size:26px">📷</span>Rasmga olish</label>`}</div>`).join('');
+        : `<label class="upl"><input type="file" accept="image/*" data-up="${side}"><span style="font-size:26px">📷</span>Rasmga olish</label>`}</div>`).join('');
     el.querySelectorAll('[data-up]').forEach(inp => inp.onchange = e => upload(inp.dataset.up, e.target.files[0]));
     el.querySelectorAll('[data-re]').forEach(b => b.onclick = () => {
       const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*';
       i.onchange = e => upload(b.dataset.re, e.target.files[0]); i.click();
     });
+    onChange && onChange();
   };
   const upload = async (side, f) => {
     if (!f) return;
@@ -858,6 +1052,7 @@ async function pasportUploader(el, o) {
       const id = await savePhoto(o, 'pasport', data, side);
       if (cur[side]) { try { await deleteDoc(doc(db, 'photos', cur[side].id)); } catch (e) { /* eski rasm qolsa ham zarar yo'q */ } }
       cur[side] = { id, data };
+      if (o.stage === 'skoring') toast("Pasport rasmi qo'shildi");
     } catch (er) { toast(errText(er), true); }
     draw();
   };
@@ -869,12 +1064,11 @@ document.addEventListener('change', e => {
   const ids = e.target.dataset?.showpw; if (!ids) return;
   ids.split(',').forEach(id => { const el = document.getElementById(id); if (el) el.type = e.target.checked ? 'text' : 'password'; });
 });
-$('#sPhone').addEventListener('input', () => { const n = normPhone($('#sPhone').value); $('#sLoginPrev').textContent = n.length >= 12 ? `Loginingiz: +${n}` : ''; });
 $('#setupForm').addEventListener('submit', async ev => {
   ev.preventDefault();
   const err = $('#setupErr'); err.classList.add('hidden');
-  const name = $('#sName').value.trim(), phone = normPhone($('#sPhone').value), pw = $('#sPass').value, branch = $('#sBranch').value.trim();
-  if (phone.length < 9) { err.textContent = "Telefon raqamini to'liq kiriting"; err.classList.remove('hidden'); return; }
+  const name = $('#sName').value.trim(), phone = normPhone($('#setupForm [name=sPhone]').value), pw = $('#sPass').value, branch = $('#sBranch').value.trim();
+  if (phone.length !== 12) { err.textContent = "Telefon raqamini to'liq kiriting"; err.classList.remove('hidden'); return; }
   if (pw !== $('#sPass2').value) { err.textContent = 'Parollar bir xil emas'; err.classList.remove('hidden'); return; }
   $('#setupBtn').disabled = true; setupRunning = true;
   try {
@@ -888,8 +1082,9 @@ $('#setupForm').addEventListener('submit', async ev => {
     b.set(doc(db, 'meta', 'setup'), { by: uid, at: serverTimestamp() });
     await b.commit();
     const b2 = writeBatch(db);
-    b2.set(branchRef, { name: branch || 'Asosiy filial', address: '', phone: '', active: true, createdAt: serverTimestamp() });
+    b2.set(branchRef, { name: branch || 'Asosiy filial', address: '', phone: '', viloyat: '', tuman: '', active: true, createdAt: serverTimestamp() });
     b2.set(doc(db, 'settings', 'main'), DEF_MAIN);
+    b2.set(doc(db, 'meta', 'migr'), { v: 2, at: Date.now() });
     await b2.commit();
     setupRunning = false;
     location.reload();
@@ -901,12 +1096,12 @@ $('#setupForm').addEventListener('submit', async ev => {
 $('#loginForm').addEventListener('submit', async ev => {
   ev.preventDefault();
   const err = $('#loginErr'); err.classList.add('hidden'); $('#loginBtn').disabled = true;
-  try { await loginWithPhone($('#lPhone').value, $('#lPass').value); location.reload(); return; }
+  try { await loginWithPhone($('#loginForm [name=lPhone]').value, $('#lPass').value); location.reload(); return; }
   catch (e) { err.textContent = errText(e); err.classList.remove('hidden'); }
   $('#loginBtn').disabled = false;
 });
 $('#logoutBtn').addEventListener('click', () => {
-  const m = modal(`<h2>${esc(S.me?.fullName || '')}</h2><p class="muted">${esc(ROLES[role()] || '')} · +${esc(S.me?.login || '')}</p>
+  const m = modal(`<h2>${esc(S.me?.fullName || '')}</h2><p class="muted">${esc(isOwner() ? 'Tizim egasi' : roleName(S.me?.role))} · ${esc(fmtPhone(S.me?.login))}</p>
     <h3>Parolni o'zgartirish</h3><div class="field"><input class="inp" type="password" id="np1" placeholder="Yangi parol (kamida 8 belgi)" autocomplete="new-password"></div>
     <button class="btn sec block" id="npBtn">Parolni saqlash</button>
     <button class="btn red block" id="outBtn" style="margin-top:16px">Chiqish</button>`);
@@ -918,8 +1113,19 @@ $('#logoutBtn').addEventListener('click', () => {
     catch (e) { toast(e.code === 'auth/requires-recent-login' ? 'Xavfsizlik uchun chiqib, qayta kirib, keyin parolni o\'zgartiring' : errText(e), true); }
   };
 });
+// Kirish va sozlash oynalaridagi telefon maydonlari (+998 bilan)
+$('#lPhoneWrap').innerHTML = phoneField('lPhone', '', 'required autocomplete="username"');
+$('#sPhoneWrap').innerHTML = phoneField('sPhone', '', 'required');
 
 ctx.createStaffAccount = createStaffAccount;
 ctx.emailFor = emailFor;
 ctx.loadStatic = loadStatic;
+ctx.roleName = roleName;
+ctx.staffWith = staffWith;
+ctx.STAGES = STAGES;
+ctx.stagePath = stagePath;
+ctx.DEFAULT_ROLES = DEFAULT_ROLES;
+ctx.hududHtml = hududHtml;
+ctx.bindHudud = bindHudud;
+ctx.muddatInfo = muddatInfo;
 boot();
