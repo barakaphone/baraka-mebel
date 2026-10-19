@@ -119,7 +119,12 @@
     return { mats, bals };
   }
 
-  function tolovTurlari() { return ['Naqd', '3 oy', '6 oy', '12 oy', '18 oy']; }
+  // To'lov turlari: Tariflar!B29:E29 dagi muddatlar
+  function tolovTurlari(settings) {
+    const out = ['Naqd'];
+    for (const c of ['B', 'C', 'D', 'E']) { const v = current('Tariflar!' + c + '29', settings); if (v !== '' && v !== null) out.push(v + ' oy'); }
+    return out;
+  }
 
   let engine = null;
   function getEngine() { if (!engine) engine = new Engine(M); return engine; }
@@ -133,10 +138,6 @@
     const E = getEngine();
     E.clearOverrides();
     const base = settingsCells(settings);
-    if (opts && opts.tolovTurlari) {
-      const oys = opts.tolovTurlari;
-      ['B', 'C', 'D', 'E'].forEach((c, i) => { if (oys[i]) base['Tariflar!' + c + '29'] = oys[i]; });
-    }
     E.setMany(base);
     E.setMany(normalize(inputs));
     const get = k => E.get(k);

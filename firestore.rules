@@ -1,0 +1,201 @@
+rules_version = '2';
+
+// ============================================================================
+//  Baraka Mebel — Firestore xavfsizlik qoidalari
+//  Firebase konsoli → Firestore Database → Rules: eski matnni TO'LIQ o'chirib,
+//  shu faylni joylang va "Publish" bosing.
+//
+//  Rollar:
+//   • admin         — hammasi
+//   • rahbar        — barcha buyurtmalar, ustaga biriktirish, ustalar, xom ashyo narxlari
+//   • sotuvchi      — faqat O'Z filiali murojaatlari, narx hisobi, rasmiylashtirish
+//   • shartnomachi  — muddatli to'lovdagi buyurtmalar, pasport, limit va qaror
+//   • olchovchi     — faqat o'ziga biriktirilgan o'lchovlar (narx va pasportni ko'rmaydi)
+//   • usta          — faqat o'ziga biriktirilgan ishlar (narx va pasportni ko'rmaydi)
+//  Narxlar alohida hujjatda (orders/{id}/pul/main), shuning uchun usta va
+//  o'lchovchi ularni o'qiy olmaydi.
+// ============================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Yordamchi funksiyalar ----------
+    function signedIn()   { return request.auth != null; }
+    function uid()        { return request.auth.uid; }
+    function profPath()   { return /databases/$(database)/documents/profiles/$(request.auth.uid); }
+    function me()         { return get(profPath()).data; }
+    function isStaff()    { return signedIn() && exists(profPath()) && me().active == true; }
+    function hasRole(r)   { return isStaff() && me().role == r; }
+    function isAdmin()    { return hasRole('admin'); }
+    function isRahbar()   { return hasRole('rahbar'); }
+    function isSotuvchi() { return hasRole('sotuvchi'); }
+    function isShart()    { return hasRole('shartnomachi'); }
+    function isOlch()     { return hasRole('olchovchi'); }
+    function isUsta()     { return hasRole('usta'); }
+    function myBranch()   { return me().branchId; }
+    function setupPath()  { return /databases/$(database)/documents/meta/setup; }
+    function setupDone()  { return exists(setupPath()); }
+    function isOwner()    { return isAdmin() && setupDone() && get(setupPath()).data.by == uid(); }
+    function newData()    { return request.resource.data; }
+    function changed()    { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function str(v, max)  { return v is string && v.size() <= max; }
+    function orderPath(id) { return /databases/$(database)/documents/orders/$(id); }
+    function pulPath(id)   { return /databases/$(database)/documents/orders/$(id)/pul/main; }
+
+    // ---------- Buyurtmani yangilash: kim nimani o'zgartira oladi ----------
+    function canUpdate(p, o, n, ch, oid) {
+      return p.role == 'admin'
+        || (p.role == 'sotuvchi' && sellerUpd(p, o, n, ch, oid))
+        || (p.role == 'shartnomachi' && shartUpd(o, n, ch, oid))
+        || (p.role == 'olchovchi' && olchUpd(o, n, ch))
+        || (p.role == 'rahbar' && rahbarUpd(o, n, ch))
+        || (p.role == 'usta' && ustaUpd(o, n, ch));
+    }
+    function workerOnly(ch, keys) { return ch.hasOnly(keys.concat(['stage', 'updatedAt', 'log'])); }
+    function move(o, n, a, b)     { return o.stage == a && n.stage == b; }
+    // Sotuvchi: o'z filiali, usta/o'lchov maydonlariga tegmaydi
+    function sellerUpd(p, o, n, ch, oid) {
+      return o.branchId == p.branchId && n.branchId == o.branchId
+        && !ch.hasAny(['no', 'branchId', 'ustaId', 'ustaName', 'ustaFoiz', 'ustaHaqi', 'olchov', 'createdAt', 'yetkazildi'])
+        && (!ch.hasAny(['tolovTuri', 'mebelTuri']) || o.stage == 'murojaat')
+        && sellerMove(o, n, oid);
+    }
+    function sellerMove(o, n, oid) {
+      return (n.stage == o.stage && o.stage in ['murojaat', 'olchov', 'olchandi'])
+        || move(o, n, 'murojaat', 'bekor')
+        || (move(o, n, 'murojaat', 'skoring') && n.tolovTuri == 'muddatli')
+        || (move(o, n, 'murojaat', 'olchov') && n.tolovTuri == 'naqd' && n.mebelTuri != 'tayyor' && n.olchovchiId != '')
+        || (move(o, n, 'murojaat', 'ustaga') && n.tolovTuri == 'naqd' && n.mebelTuri == 'tayyor')
+        || (move(o, n, 'olchandi', 'skoring') && n.tolovTuri == 'muddatli')
+        || (move(o, n, 'olchandi', 'ustaga') && (n.tolovTuri == 'naqd' || withinLimit(get(pulPath(oid)).data)));
+    }
+    function withinLimit(pul) { return pul.result.tanlangan.qoldiq <= pul.skoring.limit; }
+    // Shartnomachi: faqat qaror (pul/main dagi skoring bilan bitta paketda)
+    function shartUpd(o, n, ch, oid) {
+      return o.stage == 'skoring' && o.tolovTuri == 'muddatli' && workerOnly(ch, ['bekorSabab'])
+        && n.stage in ['olchov', 'ustaga', 'bekor']
+        && skoringMatches(getAfter(pulPath(oid)).data.skoring, n.stage);
+    }
+    function skoringMatches(sk, stage) { return sk.by == uid() && sk.qaror == (stage == 'bekor' ? 'bekor' : 'tasdiq'); }
+    // O'lchovchi: faqat o'ziga biriktirilgan o'lchov
+    function olchUpd(o, n, ch) {
+      return o.olchovchiId == uid() && move(o, n, 'olchov', 'olchandi') && workerOnly(ch, ['olchov'])
+        && n.olchov.u == uid() && str(n.olchov.izoh, 3000);
+    }
+    // Rahbar: ustaga biriktirish yoki almashtirish
+    function rahbarUpd(o, n, ch) {
+      return o.stage in ['ustaga', 'usta_tasdiq'] && n.stage == 'usta_tasdiq'
+        && workerOnly(ch, ['ustaId', 'ustaName', 'ustaFoiz', 'ustaHaqi'])
+        && get(/databases/$(database)/documents/profiles/$(n.ustaId)).data.role == 'usta';
+    }
+    // Usta: o'z ishining bosqichlari, ketma-ket
+    function ustaUpd(o, n, ch) {
+      return o.ustaId == uid() && workerOnly(ch, ['yetkazildi'])
+        && (move(o, n, 'usta_tasdiq', 'kesish') || move(o, n, 'kesish', 'yigish') || move(o, n, 'yigish', 'qadoqlash')
+            || move(o, n, 'qadoqlash', 'yetkazish') || move(o, n, 'yetkazish', 'yakunlandi'));
+    }
+
+    // ---------- Tizimni birinchi sozlash ----------
+    match /meta/setup {
+      allow read: if true;
+      allow create: if signedIn() && !setupDone()
+                    && newData().keys().hasOnly(['by', 'at'])
+                    && newData().by == uid()
+                    && getAfter(profPath()).data.role == 'admin';
+      allow update, delete: if false;
+    }
+    // Buyurtma raqamlari hisoblagichi
+    match /meta/counter {
+      allow read: if isStaff();
+      allow create: if isStaff() && newData().keys().hasOnly(['n']) && newData().n == 1;
+      allow update: if isStaff() && newData().keys().hasOnly(['n']) && newData().n == resource.data.n + 1;
+    }
+
+    // ---------- Xodimlar ----------
+    match /profiles/{pid} {
+      allow read: if isStaff() || (signedIn() && pid == uid());
+      allow create: if (isAdmin() && pid != uid())
+                    || (isRahbar() && newData().role == 'usta' && pid != uid())
+                    || (signedIn() && pid == uid() && !setupDone() && newData().role == 'admin'
+                        && getAfter(setupPath()).data.by == uid());
+      // Tizim egasining profiliga faqat egasining o'zi tegadi; o'z rolini/faolligini o'zgartirib bo'lmaydi
+      allow update: if (isAdmin()
+                        && (get(setupPath()).data.by != pid || isOwner())
+                        && (pid != uid() || !changed().hasAny(['role', 'active', 'branchId', 'replacedBy'])))
+                    || (isRahbar() && resource.data.role == 'usta' && newData().role == 'usta'
+                        && !changed().hasAny(['login', 'replacedBy', 'alias']));
+      allow delete: if false;
+    }
+
+    // ---------- Sozlamalar va filiallar ----------
+    match /settings/{id} {
+      allow read: if isStaff();
+      allow write: if isAdmin() || (id == 'xom' && isRahbar());
+    }
+    match /branches/{id} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
+    // ---------- Buyurtmalar ----------
+    match /orders/{oid} {
+      allow read: if isAdmin() || isRahbar()
+                  || (isSotuvchi() && resource.data.branchId == myBranch())
+                  || (isShart() && resource.data.tolovTuri == 'muddatli')
+                  || (isOlch() && resource.data.olchovchiId == uid())
+                  || (isUsta() && resource.data.ustaId == uid());
+
+      allow create: if isAdmin()
+                    || (isSotuvchi() && newData().branchId == myBranch() && newData().sellerId == uid()
+                        && newData().stage == 'murojaat' && newData().ustaId == '' && !('olchov' in newData()));
+
+      // Rol va o'zgargan maydonlar bir marta hisoblanib, funksiyalarga uzatiladi
+      allow update: if isStaff() && canUpdate(me(), resource.data, newData(), changed(), oid);
+      allow delete: if isOwner();
+
+      // ---------- Narx, to'lov, shartnoma qarori ----------
+      match /pul/{pid} {
+        function ord()      { return get(orderPath(oid)).data; }
+        function ordAfter() { return getAfter(orderPath(oid)).data; }
+        allow read: if isAdmin() || isRahbar()
+                    || (isSotuvchi() && resource.data.branchId == myBranch())
+                    || (isShart() && ord().tolovTuri == 'muddatli');
+        allow create: if pid == 'main' && (isAdmin()
+                      || (isSotuvchi() && newData().branchId == myBranch() && ordAfter().branchId == myBranch()
+                          && ordAfter().stage == 'murojaat' && !('skoring' in newData())));
+        allow update: if pid == 'main' && (isAdmin()
+                      || (isSotuvchi() && resource.data.branchId == myBranch() && newData().branchId == resource.data.branchId
+                          && ordAfter().stage in ['murojaat', 'olchandi']
+                          && newData().get('skoring', null) == resource.data.get('skoring', null))
+                      || (isShart() && ord().stage == 'skoring' && ord().tolovTuri == 'muddatli'
+                          && changed().hasOnly(['skoring']) && newData().skoring.by == uid()
+                          && newData().skoring.qaror in ['tasdiq', 'bekor']));
+        allow delete: if false;
+      }
+    }
+    // Admin hisobotlari uchun (barcha buyurtmalar narxi)
+    match /{path=**}/pul/{pid} {
+      allow read: if isAdmin() || isRahbar();
+    }
+
+    // ---------- Rasmlar (pasport, o'lchov, yetkazish) ----------
+    match /photos/{id} {
+      function ordOf(o) { return get(orderPath(o)).data; }
+      allow read: if isAdmin()
+                  || (resource.data.kind != 'pasport' && isStaff())
+                  || (resource.data.kind == 'pasport' && (isShart() || (isSotuvchi() && resource.data.branchId == myBranch())));
+      allow create: if isStaff() && newData().createdBy == uid()
+                    && newData().keys().hasOnly(['orderId', 'branchId', 'kind', 'side', 'data', 'createdBy', 'createdAt'])
+                    && str(newData().data, 400000)
+                    && newData().branchId == ordOf(newData().orderId).branchId
+                    && (isAdmin()
+                        || (newData().kind == 'pasport' && isSotuvchi() && newData().branchId == myBranch()
+                            && newData().side in ['oldi', 'orqa'])
+                        || (newData().kind == 'olchov' && isOlch() && ordOf(newData().orderId).olchovchiId == uid()
+                            && ordOf(newData().orderId).stage == 'olchov')
+                        || (newData().kind == 'yetkazish' && isUsta() && ordOf(newData().orderId).ustaId == uid()
+                            && ordOf(newData().orderId).stage == 'yetkazish'));
+      allow update: if false;
+      allow delete: if isAdmin() || (isStaff() && resource.data.createdBy == uid());
+    }
+  }
+}

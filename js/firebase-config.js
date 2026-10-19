@@ -8,3 +8,7 @@ export const firebaseConfig = {
   messagingSenderId: "1032271095633",
   appId: "1:1032271095633:web:25191d1182695279bf9570"
 };
+
+// Faqat sinov uchun: localhost'da ?emu=1 bo'lsa, Firebase emulyatoriga ulanadi
+export const EMU = typeof location !== 'undefined' && /[?&]emu=1/.test(location.search)
+  && ['localhost', '127.0.0.1'].includes(location.hostname);
