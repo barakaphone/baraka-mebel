@@ -57,7 +57,7 @@ textarea.inp{min-height:90px;resize:vertical}
 .btn.green{background:#1E9A4C;color:#fff;box-shadow:0 4px 14px rgba(30,154,76,.3)}
 .btn.sm{min-height:38px;font-size:14px;padding:0 12px;border-radius:9px}
 .btn.block{width:100%}
-.row2{display:flex;gap:10px;flex-wrap:wrap}.row2>*{flex:1 1 140px}
+.row2{display:flex;gap:10px;flex-wrap:wrap}.row2>*{flex:1 1 170px;min-width:0}
 .err{background:var(--badSoft);color:var(--bad);border-radius:12px;padding:12px 14px;font-weight:600;margin:12px 0}
 .note{background:var(--ySoft);border:1px solid var(--yLine);border-radius:12px;padding:10px 14px;font-size:15px;margin:10px 0}
 .note.ok{background:var(--okSoft);border-color:#B5DEC4}
@@ -212,3 +212,11 @@ button.stat{cursor:pointer}
 .install-bar .ib-x{border:0;background:transparent;font-size:22px;color:var(--muted);width:32px;height:32px;flex:none}
 .ios-steps{padding-left:20px;line-height:1.6}.ios-steps li{margin-bottom:8px}
 .ios-ic{display:inline-block;border:1px solid var(--line);border-radius:6px;padding:0 6px;font-weight:700}
+
+/* Keng ekran: tablar bir necha qatorga o'raladi, sahifa kengroq */
+@media (min-width:900px){
+  .bar-in,.tabs,.page,.res-bar .in{max-width:1200px}
+  .tabs{flex-wrap:wrap;overflow:visible}
+}
+.tbl.wide{min-width:820px}
+.tbl.wide td.xarid{min-width:200px}

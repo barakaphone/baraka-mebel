@@ -269,7 +269,15 @@ function tabsFor() {
   return t;
 }
 function renderTabs() {
-  $('#tabs').innerHTML = tabsFor().map(t => `<button data-tab="${t.id}" class="${S.tab === t.id && !S.view ? 'on' : ''}">${esc(t.t)}${t.n ? `<span class="cnt">${t.n}</span>` : ''}</button>`).join('');
+  const nav = $('#tabs'), x = nav.scrollLeft;
+  nav.innerHTML = tabsFor().map(t => `<button data-tab="${t.id}" class="${S.tab === t.id && !S.view ? 'on' : ''}">${esc(t.t)}${t.n ? `<span class="cnt">${t.n}</span>` : ''}</button>`).join('');
+  nav.scrollLeft = x;
+  // Telefonda tanlangan tab ekrandan chiqib qolmasin
+  const on = nav.querySelector('.on');
+  if (on && nav.scrollWidth > nav.clientWidth) {
+    const l = on.offsetLeft - nav.offsetLeft, r = l + on.offsetWidth;
+    if (l < nav.scrollLeft || r > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = l - 16;
+  }
 }
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) { S.tab = b.dataset.tab; S.view = null; go(S.tab); window.scrollTo(0, 0); } });
 

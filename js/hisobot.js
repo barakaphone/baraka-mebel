@@ -69,8 +69,8 @@ export async function renderReport(page, ctx) {
         <div class="stat"><b style="font-size:18px">${uzs(sum('tan'))}</b><span>Tannarx</span></div>
         <div class="stat"><b style="font-size:18px;color:${sum('foyda') < 0 ? 'var(--bad)' : 'var(--ok)'}">${uzs(sum('foyda'))}</b><span>Foyda</span></div>
       </div>
-      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mijoz F.I.O.</th><th>Xarid</th><th>Holati</th><th>To'lov</th><th class="r">Mebel qanchaga tushdi</th><th class="r">Chegirma</th><th class="r">Sotilgan summa</th><th class="r">Foyda</th></tr></thead><tbody>
-        ${rows.map((r, i) => `<tr data-i="${i}" style="cursor:pointer"><td><b>${esc(r.name)}</b><div class="hint">№${r.o.no}</div></td><td>${esc(r.xarid)}</td><td>${esc(ctx.STAGES[r.o.stage]?.t || r.o.stage)}</td><td>${esc(r.tolov)}</td>
+      <div class="tbl-wrap"><table class="tbl wide"><thead><tr><th>Mijoz F.I.O.</th><th>Xarid</th><th>Holati</th><th>To'lov</th><th class="r">Mebel qanchaga tushdi</th><th class="r">Chegirma</th><th class="r">Sotilgan summa</th><th class="r">Foyda</th></tr></thead><tbody>
+        ${rows.map((r, i) => `<tr data-i="${i}" style="cursor:pointer"><td><b>${esc(r.name)}</b><div class="hint">№${r.o.no}</div></td><td class="xarid">${esc(r.xarid)}</td><td>${esc(ctx.STAGES[r.o.stage]?.t || r.o.stage)}</td><td>${esc(r.tolov)}</td>
           <td class="r">${uzs(r.tan)}</td><td class="r">${r.cheg ? `${uzs(r.cheg)}<div class="hint">${pct(r.chegFoiz)}</div>` : '—'}</td><td class="r">${uzs(r.sotuv)}</td>
           <td class="r" style="font-weight:700;color:${r.foyda < 0 ? 'var(--bad)' : 'var(--ok)'}">${uzs(r.foyda)}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">Bu davrda rasmiylashtirilgan buyurtma yo\'q</td></tr>'}
         ${rows.length ? `<tr style="background:var(--surface2);font-weight:700"><td colspan="4">JAMI</td><td class="r">${uzs(sum('tan'))}</td><td class="r">${uzs(sum('cheg'))}</td><td class="r">${uzs(sum('sotuv'))}</td>
