@@ -301,3 +301,6 @@ button.stat{cursor:pointer}
 /* Pastdagi boshqa panellarni to'sib qo'ymasin */
 body:has(.res-bar) .cw-fab{bottom:calc(108px + env(safe-area-inset-bottom,0px))}
 body:has(#installBar) .cw-fab{bottom:calc(100px + env(safe-area-inset-bottom,0px))}
+.logo img{height:38px;width:auto;display:block}
+.logo.big img{height:64px;margin:0 auto}
+.cw-logo img{object-fit:contain;padding:3px}
