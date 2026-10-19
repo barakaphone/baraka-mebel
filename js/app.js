@@ -283,6 +283,8 @@ $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-ta
 
 function go(tab, soft) {
   if (!S.me) return;
+  document.body.classList.remove('tg-open');
+  document.documentElement.style.setProperty('--hdr', ($('.bar')?.offsetHeight || 128) + 'px');
   if (!soft) S.view = null;
   S.onTopics = null;
   renderTabs();
