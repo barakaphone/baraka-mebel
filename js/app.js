@@ -14,6 +14,7 @@ import { renderReport } from './hisobot.js';
 import { renderTopics, unreadTopics } from './muammolar.js';
 import { DEFAULT_ROLES, mergeRoles, can as canP } from './perms.js';
 import { HUDUDLAR, VILOYATLAR, fullAddress } from './hududlar.js';
+import { installApp, canInstall } from './install.js';
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -1104,7 +1105,9 @@ $('#logoutBtn').addEventListener('click', () => {
   const m = modal(`<h2>${esc(S.me?.fullName || '')}</h2><p class="muted">${esc(isOwner() ? 'Tizim egasi' : roleName(S.me?.role))} · ${esc(fmtPhone(S.me?.login))}</p>
     <h3>Parolni o'zgartirish</h3><div class="field"><input class="inp" type="password" id="np1" placeholder="Yangi parol (kamida 8 belgi)" autocomplete="new-password"></div>
     <button class="btn sec block" id="npBtn">Parolni saqlash</button>
+    ${canInstall() ? `<button class="btn gold block" id="instBtn" style="margin-top:16px">📲 Ilovani telefonga o'rnatish</button>` : ''}
     <button class="btn red block" id="outBtn" style="margin-top:16px">Chiqish</button>`);
+  m.el.querySelector('#instBtn') && (m.el.querySelector('#instBtn').onclick = () => { m.close(); installApp(); });
   m.el.querySelector('#outBtn').onclick = () => signOut(auth).then(() => location.reload());
   m.el.querySelector('#npBtn').onclick = async () => {
     const p = m.el.querySelector('#np1').value;

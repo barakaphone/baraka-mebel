@@ -8,7 +8,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Baraka Mebel</title>
 <link rel="manifest" href="manifest.json">
-<link rel="icon" type="image/svg+xml" href="img/icon.svg">
+<link rel="icon" type="image/png" sizes="192x192" href="img/icon-192.png">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="Baraka Mebel">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet">
@@ -44,6 +47,7 @@
     <label class="showpw"><input type="checkbox" data-showpw="lPass"> Parolni ko'rsatish</label>
     <div class="err hidden" id="loginErr"></div>
     <button class="btn pri block" id="loginBtn">Kirish</button>
+    <button type="button" class="btn sec block hidden" id="instLogin" style="margin-top:10px">📲 Ilovani telefonga o'rnatish</button>
   </form>
 </div>
 
@@ -64,6 +68,7 @@
 <script src="js/model.js"></script>
 <script src="js/engine.js"></script>
 <script src="js/kalkulyator.js"></script>
+<script type="module" src="js/install.js"></script>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>
