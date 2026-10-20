@@ -53,7 +53,7 @@ const safeName = s => (s || 'mijoz').replace(/[^\p{L}\p{N}]+/gu, '_');
 
 function header(nomi, kontakt, title, sub, badge) {
   return `<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;border-bottom:3px solid #E8B921;padding-bottom:8px">
-      <div style="min-width:0"><img src="img/logo-full.png" alt="" style="height:46px;display:block;margin-bottom:4px"><div style="font-size:13px;font-weight:700;color:#00297D">${esc(nomi)}</div><div style="color:#5F6B82;font-size:11px">${esc(kontakt || '')}</div></div>
+      <div style="min-width:0"><img src="img/logo-mebel.png" alt="" style="height:52px;display:block;margin-bottom:4px">${nomi && !/^baraka\s*mebel$/i.test(nomi.trim()) ? `<div style="font-size:13px;font-weight:700;color:#00297D">${esc(nomi)}</div>` : ''}<div style="color:#5F6B82;font-size:11px">${esc(kontakt || '')}</div></div>
       <div style="text-align:right;flex:none"><div style="font-size:16px;font-weight:700;color:#00297D">${title}</div>${badge || ''}<div style="font-size:11px">${sub}</div></div>
     </div>`;
 }
@@ -62,12 +62,12 @@ export async function downloadPdf(o, pul, S, branchName) {
   if (!pul?.result) { toast('Avval narxni hisoblang', true); return; }
   toast('PDF tayyorlanmoqda…');
   const st = { kalk: S.settings.kalk, xom: S.settings.xom };
-  const nomi = K.current('Sozlamalar!C13', st) || 'BARAKA MEBEL';
+  const nomi = K.current('Sozlamalar!C13', st) || '';
   const kontakt = K.current('Sozlamalar!C14', st) || '';
   const r = pul.result, t = r.tanlangan;
   const sana = new Date().toLocaleDateString('ru-RU');
   const ok = pul.skoring?.qaror === 'tasdiq';
-  const muddatli = t.oy > 0;
+  const muddatli = o.tolovTuri ? o.tolovTuri === 'muddatli' : t.oy > 0;
   const title = ok ? 'NARX TAKLIFI — TASDIQLANGAN' : 'NARX TAKLIFI';
   const badge = ok ? `<div style="color:#1E8A4C;font-weight:700;font-size:11px">✓ Tasdiqlangan: ${new Date(pul.skoring.at).toLocaleDateString('ru-RU')}</div>` : '';
   const html = `
@@ -88,7 +88,7 @@ export async function downloadPdf(o, pul, S, branchName) {
       ${r.chegirma ? `<tr><td style="text-align:right;padding:2px 8px">Jami:</td><td style="text-align:right;width:150px;padding:2px 0">${uzs(r.sotuv)}</td></tr><tr><td style="text-align:right;padding:2px 8px">Chegirma:</td><td style="text-align:right;padding:2px 0">− ${uzs(r.chegirma)}</td></tr>` : ''}
       <tr><td style="text-align:right;font-weight:700;padding:2px 8px">NAQD NARX:</td><td style="text-align:right;font-weight:700;font-size:15px;color:#00297D;padding:2px 0;white-space:nowrap">${uzs(r.naqd)}</td></tr>
     </table>
-    <div class="keep">
+    ${muddatli ? `<div class="keep">
     <div style="font-weight:700;color:#00297D;margin:12px 0 6px;font-size:13px">To'lov sharti</div>
     <div style="background:#FDF5D9;border:1px solid #F1D77F;border-radius:6px;padding:8px 10px">
       <b>${muddatli ? esc(t.turi) + " muddatli to'lov" : "Naqd to'lov"}</b>${muddatli ? ` — oldindan to'lov ${uzs(t.old)}, oylik to'lov <b>${uzs(t.oylik)}</b> × ${t.oy} oy, jami ${uzs(t.jami)}` : ` — ${uzs(r.naqd)}`}
@@ -98,9 +98,9 @@ export async function downloadPdf(o, pul, S, branchName) {
     <div style="font-weight:700;color:#00297D;margin:12px 0 6px;font-size:13px">To'lov variantlari</div>
     <table style="width:100%;border-collapse:collapse;font-size:11px">
       <thead><tr>${["To'lov turi", "Oylik to'lov", 'Oy', "Oldindan to'lov", "Jami to'lov"].map((h, i) => `<th style="${th(i)}">${h}</th>`).join('')}</tr></thead>
-      <tbody>${r.tariflar.map(v => { const sel = v.oy === t.oy; const c = td(sel ? 'background:#E3F4EA;font-weight:700;' : ''); return `<tr><td style="${c}">${esc(v.turi)}</td><td style="${c}text-align:right">${v.oy ? uzs(v.oylik) : '—'}</td><td style="${c}text-align:right">${v.oy || '—'}</td><td style="${c}text-align:right">${v.oy ? uzs(t.old) : '—'}</td><td style="${c}text-align:right">${uzs(v.jami)}</td></tr>`; }).join('')}</tbody>
-    </table></div>
-    <p style="color:#5F6B82;font-size:10px;margin-top:8px">Narxlar ${sana} holatiga ko'ra hisoblangan. Yashil qator — tanlangan to'lov turi.${o.mebelTuri !== 'tayyor' && !o.olchov ? " Yakuniy narx o'lchovdan keyin aniqlanadi." : ''}</p>
+      <tbody>${r.tariflar.filter(v => v.oy).map(v => { const sel = v.oy === t.oy; const c = td(sel ? 'background:#E3F4EA;font-weight:700;' : ''); return `<tr><td style="${c}">${esc(v.turi)}</td><td style="${c}text-align:right">${v.oy ? uzs(v.oylik) : '—'}</td><td style="${c}text-align:right">${v.oy || '—'}</td><td style="${c}text-align:right">${v.oy ? uzs(t.old) : '—'}</td><td style="${c}text-align:right">${uzs(v.jami)}</td></tr>`; }).join('')}</tbody>
+    </table></div>` : `<div class="keep" style="margin-top:12px;background:#EAF0FA;border:1px solid #C5D2EC;border-radius:6px;padding:8px 10px"><b>Naqd savdo</b> — ${uzs(r.naqd)}</div>`}
+    <p style="color:#5F6B82;font-size:10px;margin-top:8px">Narxlar ${sana} holatiga ko'ra hisoblangan.${muddatli ? ' Yashil qator — tanlangan to\'lov turi.' : ''}${o.mebelTuri !== 'tayyor' && !o.olchov ? " Yakuniy narx o'lchovdan keyin aniqlanadi." : ''}</p>
     <table class="keep" style="width:100%;margin-top:30px;font-size:11.5px"><tr>
       <td>Sotuvchi: ______________________</td><td style="text-align:right">Mijoz: ______________________</td></tr></table>
   </div>`;
@@ -136,7 +136,7 @@ function stageTimes(o, ctx) {
 export async function downloadFinalPdf(o, S, ctx) {
   toast('Yakuniy PDF tayyorlanmoqda…');
   const st = { kalk: S.settings.kalk, xom: S.settings.xom };
-  const nomi = K.current('Sozlamalar!C13', st) || 'BARAKA MEBEL';
+  const nomi = K.current('Sozlamalar!C13', st) || '';
   const at = stageTimes(o, ctx);
   const path = ctx.stagePath(o);
   const rows = path.slice(0, -1).map((s, i) => {
@@ -180,8 +180,8 @@ export async function downloadFinalPdf(o, S, ctx) {
     </div>
     <div style="font-weight:700;color:#00297D;margin:8px 0 6px;font-size:13px">Bosqichlar</div>
     <table style="width:100%;border-collapse:collapse;font-size:11px">
-      <thead><tr><th style="${th()}">Bosqich</th><th style="${th()}">Boshlandi</th><th style="${th()}">Tugadi</th><th style="${th(1)}">Ketgan vaqt</th></tr></thead>
-      <tbody>${rows.map(r => `<tr><td style="${td()}">${esc(ctx.STAGES[r.s].t)}</td><td style="${td()}">${dstr(r.start)}</td><td style="${td()}">${dstr(r.end)}</td><td style="${td('text-align:right;font-weight:700')}">${dur(r.ms)}</td></tr>`).join('')}</tbody>
+      <thead><tr><th style="${th()}">Bosqich</th><th style="${th()}">Boshlandi</th><th style="${th()}">Tugadi</th><th style="${th()}">Kim bajardi</th><th style="${th(1)}">Ketgan vaqt</th></tr></thead>
+      <tbody>${rows.map(r => `<tr><td style="${td()}">${esc(ctx.STAGES[r.s].t)}</td><td style="${td()}">${dstr(r.start)}</td><td style="${td()}">${dstr(r.end)}</td><td style="${td()}">${esc(o.stageBy?.[r.s]?.n || '')}</td><td style="${td('text-align:right;font-weight:700')}">${dur(r.ms)}</td></tr>`).join('')}</tbody>
     </table>
     <div class="keep">
     <div style="font-weight:700;color:#00297D;margin:12px 0 6px;font-size:13px">Kim bajardi</div>

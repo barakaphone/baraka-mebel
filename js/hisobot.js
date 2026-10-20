@@ -100,11 +100,12 @@ export async function renderReport(page, ctx) {
     page.querySelector('#rpX').onclick = async () => {
       try {
         await loadXlsx();
-        const data = [['№', 'Mijoz F.I.O.', 'Xarid', 'Holati', "To'lov", 'Mebel qanchaga tushdi', 'Chegirma', 'Chegirma %', 'Sotilgan summa', 'Foyda', 'Rasmiylashtirilgan']];
-        rows.forEach(r => data.push([r.o.no, r.name, r.xarid, ctx.STAGES[r.o.stage]?.t || r.o.stage, r.tolov, Math.round(r.tan), Math.round(r.cheg), Math.round(r.chegFoiz * 1000) / 10, Math.round(r.sotuv), Math.round(r.foyda), ymd(new Date(r.o.formalAt))]));
-        data.push(['', 'JAMI', '', '', '', Math.round(sum('tan')), Math.round(sum('cheg')), '', Math.round(sum('sotuv')), Math.round(sum('foyda')), '']);
+        const created = o => o.stageAt?.murojaat || o.createdAt?.toMillis?.() || 0;
+        const data = [['№', 'Mijoz F.I.O.', 'Sotuvchi', 'Murojaat sanasi', 'Xarid', 'Holati', "To'lov", 'Mebel qanchaga tushdi', 'Chegirma', 'Chegirma %', 'Sotilgan summa', 'Foyda', 'Rasmiylashtirilgan']];
+        rows.forEach(r => data.push([r.o.no, r.name, r.o.sellerName || '', created(r.o) ? ymd(new Date(created(r.o))) : '', r.xarid, ctx.STAGES[r.o.stage]?.t || r.o.stage, r.tolov, Math.round(r.tan), Math.round(r.cheg), Math.round(r.chegFoiz * 1000) / 10, Math.round(r.sotuv), Math.round(r.foyda), ymd(new Date(r.o.formalAt))]));
+        data.push(['', 'JAMI', '', '', '', '', '', Math.round(sum('tan')), Math.round(sum('cheg')), '', Math.round(sum('sotuv')), Math.round(sum('foyda')), '']);
         const ws = window.XLSX.utils.aoa_to_sheet(data);
-        ws['!cols'] = [6, 24, 40, 18, 10, 18, 14, 10, 18, 16, 14].map(w => ({ wch: w }));
+        ws['!cols'] = [6, 24, 20, 14, 40, 18, 10, 18, 14, 10, 18, 16, 14].map(w => ({ wch: w }));
         const wb = window.XLSX.utils.book_new();
         window.XLSX.utils.book_append_sheet(wb, ws, 'Hisobot');
         window.XLSX.writeFile(wb, `Baraka-mebel-hisobot-${ymd(new Date())}.xlsx`);

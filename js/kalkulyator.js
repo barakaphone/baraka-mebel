@@ -113,6 +113,16 @@
     return out;
   }
 
+  // Matraslar: sozlamalardagi ro'yxat (yo'q bo'lsa — Excel'dagi 4 ta o'lcham va ularning narxi)
+  const MATRAS_KEYS = ['Sozlamalar!C21', 'Sozlamalar!C22', 'Sozlamalar!C23', 'Sozlamalar!C24'];
+  function matraslar(settings) {
+    if (settings && Array.isArray(settings.matraslar)) return settings.matraslar.filter(m => !m.deleted);
+    const st = { kalk: (settings && settings.kalk) || {}, xom: (settings && settings.xom) || {} };
+    return MATRAS_KEYS.map((k, i) => ({ id: 'b' + i, olcham: cell('Sozlamalar', 'E' + (21 + i)), nomi: '', narx: num(current(k, st)) }));
+  }
+  const matrasLabel = m => m.nomi ? `${m.olcham} ${m.nomi}` : String(m.olcham);
+  const matrasOpts = settings => ["Yo'q", ...matraslar(settings).map(matrasLabel)];
+
   // Oshxona: xomashyo → narxi bor balandliklar
   function oshxonaLists(settings) {
     const pairs = {};
@@ -144,6 +154,7 @@
   function applyXomExtra(out, settings) {
     const custom = (settings && settings.xomCustom) || [];
     const deleted = new Set((settings && settings.xomDeleted) || []);
+    deleted.add(QOTIRGICH); // Lak va qotirgich bitta qatorda: "Lak (qotirgich bilan)"
     // O'chirilgan standart xom ashyo: miqdori 0 (hisobdan chiqadi)
     for (const key of deleted) {
       const [sh, row] = key.split('#');
@@ -198,6 +209,11 @@
     // Oldindan to'lov: foiz yoki summa (Excel'da summa yozilsa foiz o'rniga shu olinadi)
     if (inputs._oldMode === 'sum') norm['Buyurtma!B21'] = 0; else norm['Buyurtma!B22'] = '';
     E.setMany(norm);
+    // Matras narxi ro'yxatdan (qo'shilgan matraslar ham)
+    if (settings && Array.isArray(settings.matraslar) && norm['Spalniy!C20'] && norm['Spalniy!C20'] !== "Yo'q") {
+      const m = matraslar(settings).find(x => matrasLabel(x) === norm['Spalniy!C20']);
+      E.setMany({ 'Laminat xom ashyo!R38': m ? num(m.narx) : 0 });
+    }
     const get = k => E.get(k);
     // Chegirma summa bilan berilsa — foizga aylantiriladi (jami sotuv chegirmaga bog'liq emas)
     if (inputs._chegMode === 'sum') {
@@ -310,12 +326,14 @@
   }
 
   const NARX_TURI = ["So'm (kursga bog'liq)", "So'm (qat'iy)", 'Dollar'];
+  const QOTIRGICH = 'Krasheniy xom ashyo#17', LAK = 'Krasheniy xom ashyo#16';
   function xomRows(which) {
     const sh = which === 'laminat' ? 'Laminat xom ashyo' : 'Krasheniy xom ashyo';
     const [cOtx, cTur, cNarx, cIzoh, last] = which === 'laminat' ? ['O', 'Q', 'R', 'V', 49] : ['K', 'M', 'N', 'R', 35];
     const out = [];
     for (let r = 5; r <= last; r++) {
-      const name = cell(sh, 'C' + r);
+      if (sh + '#' + r === QOTIRGICH) continue;
+      const name = sh + '#' + r === LAK ? 'Lak (qotirgich bilan)' : cell(sh, 'C' + r);
       out.push({
         r, group: cell(sh, 'B' + r), name: name ?? null, nameKey: sh + '!C' + r, unit: cell(sh, 'D' + r) || '',
         otx: { key: sh + '!' + cOtx + r, def: cell(sh, cOtx + r), ro: isFormula(sh, cOtx + r) || cell(sh, cOtx + r) === null },
@@ -354,7 +372,7 @@
 
   const api = {
     defaults, compute, normalize, spalniyFields, korpusFields, KOR_COLS, OSH_ROWS, oshxonaLists, tolovTurlari,
-    sozlamalarRows, xomRows, xomName, oshxonaNarxRows, tarifRows, current, isXomKey, NARX_TURI, settingsCells, SARF_KEYS,
+    sozlamalarRows, xomRows, xomName, matraslar, matrasLabel, matrasOpts, MATRAS_KEYS, oshxonaNarxRows, tarifRows, current, isXomKey, NARX_TURI, settingsCells, SARF_KEYS,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   g.KALK = api;

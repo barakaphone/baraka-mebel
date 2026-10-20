@@ -333,3 +333,35 @@ body:has(#installBar) .cw-fab{bottom:calc(100px + env(safe-area-inset-bottom,0px
 .an-box h4{margin:2px 0 6px;font-size:14px}
 .an-box .tbl td{padding:5px 6px;font-size:13.5px}
 .an-box .tbl td:first-child{word-break:break-word}
+.step small{display:block;font-size:10.5px;opacity:.85;margin-top:1px}
+
+/* Ro'yxatli maydon (viloyat, tuman) */
+.combo{position:relative}
+.combo .inp{padding-right:38px}
+.combo-arrow{position:absolute;right:4px;top:50%;transform:translateY(-50%);border:0;background:transparent;color:var(--muted);width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:8px}
+.combo-arrow:hover{background:var(--surface2)}
+.combo-list{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:60;background:var(--surface);border:1px solid var(--gLine);border-radius:12px;box-shadow:0 12px 30px rgba(0,41,125,.18);max-height:240px;overflow-y:auto;padding:4px}
+.combo-list button{display:block;width:100%;text-align:left;border:0;background:transparent;padding:8px 10px;border-radius:8px;font-size:15px}
+.combo-list button:hover,.combo-list button.on{background:var(--gSoft);color:var(--g)}
+
+/* Murojaat oynasi: yaratuvchi, sana, to'lov turi */
+.meta-row{display:flex;flex-wrap:wrap;gap:6px 16px;background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13.5px;color:var(--muted);margin-bottom:12px}
+.meta-row b{color:var(--ink)}
+.paysel{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.paysel label{cursor:pointer}
+.paysel input{position:absolute;opacity:0;pointer-events:none}
+.paysel span{display:block;text-align:center;border:2px solid var(--line);border-radius:12px;padding:12px 8px;font-weight:700;color:var(--muted);background:var(--surface)}
+.paysel input:checked+span{border-color:var(--g);background:var(--gSoft);color:var(--g)}
+.paysel input:focus-visible+span{outline:3px solid var(--y)}
+.tabs .tab-new{background:var(--y);border-color:var(--yDeep);color:var(--g);font-weight:700}
+
+/* Rasm va audio */
+.media .photos{margin-bottom:8px}
+.media-btns{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.media-btns label.btn{cursor:pointer}
+.aud{position:relative;display:flex;align-items:center;gap:6px;grid-column:span 2;background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:6px 8px}
+.aud audio{width:100%;height:36px;min-width:0}
+.aud button{border:0;background:rgba(0,0,0,.55);color:#fff;border-radius:50%;width:24px;height:24px;flex:none}
+.rec-on{color:var(--bad);font-weight:700;margin-top:6px;animation:recBlink 1s infinite}
+@keyframes recBlink{50%{opacity:.5}}
+.note.warnb{background:var(--warnSoft);border-color:#F1D59A}

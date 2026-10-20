@@ -133,7 +133,7 @@ await ok('o\'lchovchi rasm yuklaydi', setDoc(doc(ol, 'photos', 'p3'), { orderId:
 await no('o\'lchovchi pasport yuklay olmaydi', setDoc(doc(ol, 'photos', 'p4'), { orderId: 'o-ol', branchId: 'b1', kind: 'pasport', side: 'oldi', data: IMG, createdBy: P.olch }));
 await ok('o\'lchovchi "o\'lchandi"', updateDoc(doc(ol, 'orders', 'o-ol'), { stage: 'olchandi', olchov: { izoh: '320 sm', u: P.olch }, ...log }));
 await seed();
-await no('o\'lchovchi bosqichni sakrata olmaydi', updateDoc(doc(as(P.olch), 'orders', 'o-ol'), { stage: 'ustaga', olchov: { izoh: 'x', u: P.olch } }));
+await no('o\'lchovchi bosqichni sakrata olmaydi', updateDoc(doc(as(P.olch), 'orders', 'o-ol'), { stage: 'kesish', olchov: { izoh: 'x', u: P.olch } }));
 
 // --- Rahbar
 const ra = as(P.rahbar);
@@ -223,7 +223,7 @@ await ok('rahbar muddatni o\'zgartiradi', updateDoc(doc(as(P.rahbar), 'orders', 
 await ok('rahbar usta bosqichida narxni o\'zgartiradi', updateDoc(doc(as(P.rahbar), 'orders', 'o-ug', 'pul', 'main'), { result: { naqd: 1200, tanlangan: { qoldiq: 0, oy: 0 } }, ustaHaqi: 60 }));
 await ok('rahbar buyurtma hisobini yangilaydi', updateDoc(doc(as(P.rahbar), 'orders', 'o-ug'), { hasCalc: true, ish: { lines: [] } }));
 await no('rahbar ustani narx bilan birga almashtira olmaydi', updateDoc(doc(as(P.rahbar), 'orders', 'o-ug', 'pul', 'main'), { result: { naqd: 1 }, ustaId: P.usta2 }));
-await no('sotuvchi usta bosqichida narxni o\'zgartira olmaydi', updateDoc(doc(as(P.sot), 'orders', 'o-ug', 'pul', 'main'), { result: { naqd: 1 } }));
+await no('sotuvchi usta biriktirilgan narxda usta haqini o\'zgartira olmaydi', updateDoc(doc(as(P.sot), 'orders', 'o-ug', 'pul', 'main'), { result: { naqd: 1 }, ustaHaqi: 999 }));
 await ok('usta sotuvchiga bildirishnoma yuboradi', setDoc(doc(as(P.usta), 'notifs', 'n2'), { to: P.sot, orderId: 'o-ks', orderNo: '9', client: 'M', kind: 'usta', text: 'qabul qildi', by: P.usta, byName: 'U', at: 2, read: false }));
 await no('boshqa nomidan bildirishnoma yozib bo\'lmaydi', setDoc(doc(as(P.usta), 'notifs', 'n3'), { to: P.sot, orderId: 'o-ks', orderNo: '9', client: 'M', kind: 'usta', text: 'x', by: P.rahbar, byName: 'U', at: 2, read: false }));
 await ok('sotuvchi o\'z bildirishnomalarini o\'qiydi', getDocs(query(collection(as(P.sot), 'notifs'), where('to', '==', P.sot))));
@@ -236,6 +236,48 @@ await ok('sotuvchi shartnomadan keyin o\'lchovchini biriktiradi', (async () => {
   await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'orders', 'o-ol2'), { no: 10, branchId: 'b1', sellerId: P.sot, stage: 'olchov', tolovTuri: 'muddatli', mebelTuri: 'yigiladigan', olchovchiId: '', log: [] }));
   return updateDoc(doc(as(P.sot), 'orders', 'o-ol2'), { olchovchiId: P.olch, olchovchiName: 'K' });
 })());
+
+// --- Yangi bosqichlar: usta narx tasdig'i, mijoz tasdig'i, kirim, shartnoma, to'lov turini almashtirish
+await seed();
+await env.withSecurityRulesDisabled(async c => {
+  const db = c.firestore();
+  const ord = (id, d) => setDoc(doc(db, 'orders', id), { no: 20, branchId: 'b1', sellerId: P.sot, mebelTuri: 'yigiladigan', olchovchiId: P.olch, ustaId: P.usta, log: [], ...d });
+  await ord('n-un', { stage: 'usta_narx', tolovTuri: 'muddatli' });
+  await ord('n-mt', { stage: 'mijoz_tasdiq', tolovTuri: 'muddatli' });
+  await setDoc(doc(db, 'orders', 'n-mt', 'pul', 'main'), { branchId: 'b1', result: { naqd: 1000, tanlangan: { qoldiq: 800, oy: 6 } }, skoring: { limit: 900, qaror: 'tasdiq', by: P.shart } });
+  await ord('n-km', { stage: 'kirim', tolovTuri: 'muddatli' });
+  await setDoc(doc(db, 'orders', 'n-km', 'pul', 'main'), { branchId: 'b1', result: { naqd: 1000 } });
+  await ord('n-kn', { stage: 'kirim', tolovTuri: 'naqd' });
+  await ord('n-sh', { stage: 'shartnoma', tolovTuri: 'muddatli' });
+  await ord('n-pr', { stage: 'kesish', tolovTuri: 'naqd', muddat: '2030-01-15', muddatTasdiq: { holat: 'kutilmoqda', eski: '2030-01-10', yangi: '2030-01-15' } });
+});
+await ok('usta o\'lchov va narxga rozi bo\'ladi', updateDoc(doc(as(P.usta), 'orders', 'n-un'), { stage: 'mijoz_tasdiq' }));
+await env.withSecurityRulesDisabled(c => updateDoc(doc(c.firestore(), 'orders', 'n-un'), { stage: 'usta_narx' }));
+await ok('usta e\'tiroz bildiradi', updateDoc(doc(as(P.usta), 'orders', 'n-un'), { ustaEtiroz: { sabab: 'x', t: 1, n: 'U' } }));
+await no('boshqa usta rozilik bera olmaydi', updateDoc(doc(as(P.usta2), 'orders', 'n-un'), { stage: 'mijoz_tasdiq' }));
+await no('sotuvchi usta o\'rniga rozilik bera olmaydi', updateDoc(doc(as(P.sot), 'orders', 'n-un'), { stage: 'mijoz_tasdiq' }));
+await ok('rahbar e\'tirozdan keyin qayta o\'lchovga yuboradi', updateDoc(doc(as(P.rahbar), 'orders', 'n-un'), { stage: 'olchov', ustaEtiroz: null }));
+await ok('sotuvchi mijoz tasdig\'i rasmini yuklaydi', setDoc(doc(as(P.sot), 'photos', 'mt1'), { orderId: 'n-mt', branchId: 'b1', kind: 'tasdiq', side: 'foto', data: IMG, createdBy: P.sot }));
+await ok('sotuvchi mijoz tasdig\'i audiosini yuklaydi', setDoc(doc(as(P.sot), 'photos', 'mt2'), { orderId: 'n-mt', branchId: 'b1', kind: 'tasdiq', side: 'audio', data: 'data:audio/webm;base64,AAAA', createdBy: P.sot }));
+await no('usta mijoz tasdig\'ini yuklay olmaydi', setDoc(doc(as(P.usta), 'photos', 'mt3'), { orderId: 'n-mt', branchId: 'b1', kind: 'tasdiq', side: 'foto', data: IMG, createdBy: P.usta }));
+await no('sotuvchi kirimdan sakrab o\'tolmaydi', updateDoc(doc(as(P.sot), 'orders', 'n-mt'), { stage: 'shartnoma' }));
+await ok('sotuvchi: mijoz tasdiqladi → kirim', updateDoc(doc(as(P.sot), 'orders', 'n-mt'), { stage: 'kirim' }));
+await env.withSecurityRulesDisabled(c => updateDoc(doc(c.firestore(), 'orders', 'n-mt'), { stage: 'mijoz_tasdiq' }));
+await ok('sotuvchi: mijoz rozi emas → bekor', updateDoc(doc(as(P.sot), 'orders', 'n-mt'), { stage: 'bekor', bekorSabab: 'Qimmat' }));
+await env.withSecurityRulesDisabled(c => updateDoc(doc(c.firestore(), 'orders', 'n-mt'), { stage: 'mijoz_tasdiq' }));
+await ok('sotuvchi naqdga o\'tkazadi', updateDoc(doc(as(P.sot), 'orders', 'n-mt'), { tolovTuri: 'naqd' }));
+await ok('sotuvchi muddatliga qaytarib skoringga yuboradi', updateDoc(doc(as(P.sot), 'orders', 'n-mt'), { tolovTuri: 'muddatli', stage: 'skoring', skQaytish: 'mijoz_tasdiq' }));
+await ok('rahbar kirim qiladi (muddatli → shartnoma)', updateDoc(doc(as(P.rahbar), 'orders', 'n-km'), { stage: 'shartnoma', kirimInfo: { hujjat: 'NK', t: 1, n: 'R' } }));
+await ok('rahbar kirim summasini yozadi', updateDoc(doc(as(P.rahbar), 'orders', 'n-kn', 'pul', 'main'), { kirim: { summa: 5 } }).catch(() => setDoc(doc(as(P.admin), 'orders', 'n-kn', 'pul', 'main'), { branchId: 'b1', kirim: { summa: 5 } })));
+await no('naqdda kirimdan keyin shartnoma bo\'lmaydi', updateDoc(doc(as(P.rahbar), 'orders', 'n-kn'), { stage: 'shartnoma', kirimInfo: { hujjat: 'NK', t: 1, n: 'R' } }));
+await ok('naqdda kirimdan keyin — usta qabul qilishi', updateDoc(doc(as(P.rahbar), 'orders', 'n-kn'), { stage: 'usta_tasdiq', kirimInfo: { hujjat: 'NK', t: 1, n: 'R' } }));
+await no('sotuvchi kirim qila olmaydi', updateDoc(doc(as(P.sot), 'orders', 'n-km'), { stage: 'shartnoma', kirimInfo: { hujjat: 'x' } }));
+await ok('sotuvchi shartnoma rasmini yuklaydi', setDoc(doc(as(P.sot), 'photos', 'sh1'), { orderId: 'n-sh', branchId: 'b1', kind: 'shartnoma', side: 'foto', data: IMG, createdBy: P.sot }));
+await ok('sotuvchi shartnomani tuzadi → usta', updateDoc(doc(as(P.sot), 'orders', 'n-sh'), { stage: 'usta_tasdiq', shartnoma: { raqam: '1', sana: '2030-01-01', t: 1, n: 'S' } }));
+await ok('sotuvchi: mijoz yangi muddatga rozi', updateDoc(doc(as(P.sot), 'orders', 'n-pr'), { muddatTasdiq: { holat: 'rozi', eski: '2030-01-10', yangi: '2030-01-15' } }));
+await env.withSecurityRulesDisabled(c => updateDoc(doc(c.firestore(), 'orders', 'n-pr'), { muddatTasdiq: { holat: 'kutilmoqda', eski: '2030-01-10', yangi: '2030-01-15' } }));
+await no('sotuvchi boshqa sanani qo\'ya olmaydi', updateDoc(doc(as(P.sot), 'orders', 'n-pr'), { muddat: '2030-03-01', muddatTarix: [{}], muddatTasdiq: { holat: 'rad' } }));
+await ok('sotuvchi: mijoz rozi emas — eski sana qaytadi', updateDoc(doc(as(P.sot), 'orders', 'n-pr'), { muddat: '2030-01-10', muddatTarix: [{}], muddatTasdiq: { holat: 'rad' } }));
 
 // --- Admin
 await seed();

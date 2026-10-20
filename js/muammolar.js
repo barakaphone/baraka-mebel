@@ -16,7 +16,7 @@ const COLORS = ['#E17076', '#4FAE4E', '#E5A64E', '#3D8BD9', '#8E78E0', '#E56BA3'
 const colorOf = s => { let h = 0; for (const ch of String(s || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return COLORS[h % COLORS.length]; };
 const initials = n => String(n || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || '?';
 const avatar = (name, key, size = 40) => `<span class="cw-av" style="width:${size}px;height:${size}px;background:${colorOf(key || name)};font-size:${Math.round(size * 0.38)}px">${esc(initials(name))}</span>`;
-const LOGO = size => `<span class="cw-av cw-logo" style="width:${size}px;height:${size}px"><img src="img/logo-mark.png" alt=""></span>`;
+const LOGO = size => `<span class="cw-av cw-logo" style="width:${size}px;height:${size}px"><img src="img/logo-mebel-mark.png" alt=""></span>`;
 const hm = ms => new Date(ms).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 const dayKey = ms => { const d = new Date(ms); return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate(); };
 function dayLabel(ms) {

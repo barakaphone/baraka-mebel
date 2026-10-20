@@ -23,12 +23,12 @@ def square(size, pad, bg):
 
 
 W = (255, 255, 255, 255)
-square(192, .12, W).save('img/icon-192-v2.png', optimize=True)
-square(512, .12, W).save('img/icon-512-v2.png', optimize=True)
-square(512, .22, W).save('img/icon-maskable-512-v2.png', optimize=True)
-square(180, .14, W).convert('RGB').save('img/apple-touch-icon-v2.png', optimize=True)
-square(96, .02, (0, 0, 0, 0)).save('img/favicon-v2.png', optimize=True)
-square(256, .04, (0, 0, 0, 0)).save('img/logo-mark.png', optimize=True)
+square(192, .12, W).save('img/icon-192-v3.png', optimize=True)
+square(512, .12, W).save('img/icon-512-v3.png', optimize=True)
+square(512, .22, W).save('img/icon-maskable-512-v3.png', optimize=True)
+square(180, .14, W).convert('RGB').save('img/apple-touch-icon-v3.png', optimize=True)
+square(96, .02, (0, 0, 0, 0)).save('img/favicon-v3.png', optimize=True)
+square(256, .04, (0, 0, 0, 0)).save('img/logo-mebel-mark.png', optimize=True)
 P = 4
-src.crop((x0 - P, y0 - P, x1 + P, y1 + P)).save('img/logo-full.png', optimize=True)
+src.crop((x0 - P, y0 - P, x1 + P, y1 + P)).save('img/logo-mebel.png', optimize=True)
 print('ok', cut)

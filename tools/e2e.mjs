@@ -85,7 +85,9 @@ await page.context().close();
 // 4. Sotuvchi: murojaat → hisob → rasmiylashtirish (6 oy, pasport)
 page = await newPage();
 await login(page, '902222222', 'Parol1234');
-await page.click('#newOrder');
+await page.click('[data-newo]');
+await page.waitForSelector('#nf');
+await page.click('#nf .paysel label:has-text("Muddatli")');
 await page.fill('#nf [name=name]', 'Mijoz Test'); await page.fill('#nf [name=phone]', '907777777');
 await page.fill('#nf [name=address]', "Qo'qon sh., Navoiy ko'chasi 5");
 await page.click('#nf button.pri');
@@ -103,6 +105,7 @@ await shot(page, 'kalkulyator');
 const price1 = await page.textContent('#rbPrice');
 await page.click('#saveCalc');
 await page.waitForSelector('[data-a="formal"]', { timeout: 20000 });
+console.log('Rasmiylashtirish tugmasi:', (await page.textContent('[data-a="formal"]')).trim());
 await page.click('[data-a="formal"]');
 await page.waitForSelector('#ppUp [data-up="oldi"]', { state: 'attached' });
 await page.setInputFiles('#ppUp [data-up="oldi"]', IMG);
@@ -156,17 +159,25 @@ await page.waitForSelector('#olchovUp .ph >> nth=3', { timeout: 20000 });
 await page.fill('#olchovIzoh', "Devor 280 sm, shift 265 sm. Shkaf uchun joy 260×60.");
 await shot(page, 'olchovchi');
 await page.click('[data-a="olchandi"]');
-await page.waitForSelector(".badge:has-text(\"O'lchandi\")", { timeout: 20000 }); await saved(page);
+await page.waitForSelector('.badge:has-text("Ustaga biriktirish")', { timeout: 20000 }); await saved(page);
 console.log("O'lchovchi narxni ko'radimi:", !!seesPrice);
 await page.context().close();
 
-// 7. Sotuvchi: 🔔 "o'lchandi" xabari; narx o'zgardi → sabab → ustaga yuborish (limit ichida bo'lsa)
+// 7. Sotuvchi: 🔔 "o'lchandi" xabari
 page = await newPage();
 await login(page, '902222222', 'Parol1234');
 await page.waitForSelector('#bellCnt:not(.hidden)', { timeout: 15000 });
 console.log('Sotuvchi bildirishnomalari:', await page.textContent('#bellCnt'));
 await page.click('#bellBtn'); await page.waitForSelector('.nitem'); await shot(page, 'bildirishnoma');
 await page.click('.nitem'); await page.waitForSelector('#back');
+console.log("O'lchovdan keyingi bosqich:", (await page.textContent('h2 + div .badge:last-child, .badge >> nth=0')).trim());
+await page.context().close();
+
+// 8. Rahbar: narxni o'zgartiradi (sababi bilan) va ustani biriktiradi
+page = await newPage();
+await login(page, '905555555', 'Parol1234');
+await page.click('[data-chip="ustaga"]');
+await openFirst(page);
 await page.click('[data-a="calc"]');
 await page.waitForSelector('[data-k="Spalniy!C8"]');
 await page.fill('[data-k="Spalniy!C8"]', '250');
@@ -175,41 +186,72 @@ await page.click('#saveCalc');
 await page.waitForSelector('#rz');
 await page.fill('#rz', "O'lchovdan keyin shkaf 250 sm bo'ldi");
 await page.click('#rzb');
-await page.waitForSelector('[data-a="toUsta"]', { timeout: 20000 });
-await page.click('[data-a="toUsta"]');
-await page.waitForSelector('.badge:has-text("Ustaga biriktirish")', { timeout: 20000 }); await saved(page);
-await page.waitForTimeout(3000);
+await page.waitForSelector('#ustaSel', { timeout: 20000 });
+await page.selectOption('#ustaSel', { index: 1 });
+await page.waitForTimeout(300);
+await shot(page, 'rahbar');
+await page.click('[data-a="assign"]');
+await page.waitForSelector(".badge:has-text(\"O'lchov narxni tasdig'i\")", { timeout: 20000 }); await saved(page);
+await page.context().close();
+
+// 9. Usta: avval e'tiroz, keyin o'lchov va narxga rozilik
+page = await newPage();
+await login(page, '906666666', 'Parol1234');
+await openFirst(page);
+await page.waitForSelector('#ustaHaqiMe b', { timeout: 15000 });
+console.log('Usta o\'z haqini ko\'radi:', (await page.textContent('#ustaHaqiMe')).trim());
+await page.click('[data-a="un-no"]'); await page.fill('#etz', 'Shkaf chuqurligini aniqlash kerak'); await page.click('#etzb'); await saved(page);
+await page.waitForTimeout(1500);
+await page.click('[data-a="un-ok"]');
+await page.waitForSelector('.badge:has-text("Narxni tasdiqlatish")', { timeout: 20000 }); await saved(page);
+await shot(page, 'usta-rozi');
+await page.context().close();
+
+// 10a. Sotuvchi: mijozga yakuniy narxni tasdiqlatadi (foto — kamida bittasi)
+page = await newPage();
+await login(page, '902222222', 'Parol1234');
+await openFirst(page);
+await page.waitForSelector('#mtUp [data-ph]', { state: 'attached' });
+await page.click('[data-a="mt-ok"]');
+await page.waitForSelector('#toast.show.bad');
+await page.setInputFiles('#mtUp [data-ph]', IMG);
+await page.waitForSelector('#mtUp .ph', { timeout: 20000 });
+await shot(page, 'mijoz-tasdiq');
 if (await page.locator('[data-a="pdf"]').count()) {
   const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.locator('[data-a="pdf"]').click()]);
   await dl.saveAs(`${SHOTS}/narx-taklifi.pdf`);
   console.log('PDF yuklandi:', dl.suggestedFilename());
 }
-await shot(page, 'sotuvchi-ustaga');
+await page.waitForTimeout(1500);
+await page.click('[data-a="mt-ok"]');
+await page.waitForSelector('.badge:has-text("Mahsulotni kirim qilish")', { timeout: 20000 }); await saved(page);
 await page.context().close();
 
-// 8. Rahbar
+// 10b. Rahbar: mahsulotni kirim qilish
 page = await newPage();
 await login(page, '905555555', 'Parol1234');
+await page.click('[data-chip="kirim"]');
 await openFirst(page);
-// Rahbar mebel narxini o'zgartiradi (sababi bilan)
-await page.click('[data-a="calc"]');
-await page.waitForSelector('[data-k="Spalniy!C8"]');
-await page.fill('[data-k="Spalniy!C8"]', '255');
-await page.waitForTimeout(800);
-await page.click('#saveCalc');
-await page.waitForSelector('#rz');
-await page.fill('#rz', 'Mijoz qo\'shimcha tortma so\'radi');
-await page.click('#rzb');
-await page.waitForSelector('#ustaSel', { timeout: 20000 });
-console.log('Rahbar narxni o\'zgartirdi, bosqich:', await page.textContent('.badge >> nth=0'));
-await page.selectOption('#ustaSel', { index: 1 });
-await page.waitForTimeout(300);
-await shot(page, 'rahbar');
-await page.click('[data-a="assign"]');
-await page.waitForSelector(".badge:has-text(\"Usta qabul qilishi\")", { timeout: 20000 }); await saved(page);
+await page.fill('#kSum', '5 400 000'); await page.fill('#kDoc', 'NK-145'); await page.fill('#kIzoh', 'Laminat va furnitura');
+await page.setInputFiles('#kUp [data-ph]', IMG);
+await page.waitForSelector('#kUp .ph', { timeout: 20000 });
+await page.click('[data-a="kirim-ok"]');
+await page.waitForSelector('.badge:has-text("Shartnoma")', { timeout: 20000 }); await saved(page);
 await page.context().close();
 
-// 9. Usta
+// 10c. Sotuvchi: shartnoma
+page = await newPage();
+await login(page, '902222222', 'Parol1234');
+await openFirst(page);
+await page.fill('#shNo', 'SH-2026-15');
+await page.setInputFiles('#shUp [data-ph]', [IMG, IMG]);
+await page.waitForSelector('#shUp .ph >> nth=1', { timeout: 20000 });
+await shot(page, 'shartnoma');
+await page.click('[data-a="sh-ok"]');
+await page.waitForSelector('.badge:has-text("Usta qabul qilishi")', { timeout: 20000 }); await saved(page);
+await page.context().close();
+
+// 11. Usta: ishni qabul qiladi, muddatni o'zgartiradi
 page = await newPage();
 await login(page, '906666666', 'Parol1234');
 await openFirst(page);
@@ -218,13 +260,28 @@ await page.fill('#muddatIn', '2030-12-31');
 await page.locator('[data-a="u-ok"]').click();
 await page.click('.modal [data-ok]');
 await saved(page);
-// Muddatni o'zgartirish (sababi bilan)
 await page.waitForSelector('[data-a="muddat"]');
 await page.click('[data-a="muddat"]');
 await page.fill('#nm', '2031-01-15'); await page.fill('#nmz', 'Material kechikdi');
 await page.click('#nmb'); await saved(page);
 await page.waitForTimeout(1500);
 await shot(page, 'usta-muddat');
+await page.context().close();
+
+// 11b. Sotuvchi: yangi muddatga mijoz tasdig'i
+page = await newPage();
+await login(page, '902222222', 'Parol1234');
+await openFirst(page);
+await page.waitForSelector('#mdUp [data-ph]', { state: 'attached' });
+await page.setInputFiles('#mdUp [data-ph]', IMG);
+await page.waitForSelector('#mdUp .ph', { timeout: 20000 });
+await page.click('[data-a="md-ok"]'); await saved(page);
+await page.context().close();
+
+// 12. Usta: ish bosqichlari va yetkazib berish
+page = await newPage();
+await login(page, '906666666', 'Parol1234');
+await openFirst(page);
 for (let i = 0; i < 3; i++) { await page.waitForTimeout(3000); await page.locator('[data-a="u-next"]').click(); await saved(page); }
 await page.waitForSelector('#yetkUp input[type=file]', { state: 'attached', timeout: 20000 });
 await page.click('[data-a="delivered"]');

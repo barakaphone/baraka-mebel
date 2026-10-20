@@ -52,7 +52,7 @@ function showBar() {
   const bar = document.createElement('div');
   bar.id = 'installBar';
   bar.className = 'install-bar';
-  bar.innerHTML = `<img src="img/icon-192-v2.png" alt="">
+  bar.innerHTML = `<img src="img/icon-192-v3.png" alt="">
     <div class="ib-t"><b>Baraka Mebel ilovasi</b><span>Telefoningizga o'rnating — bir bosishda ochiladi</span></div>
     <button class="btn gold sm" data-inst>📲 O'rnatish</button><button class="ib-x" data-later aria-label="Keyinroq">×</button>`;
   document.body.appendChild(bar);

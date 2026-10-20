@@ -109,3 +109,40 @@ document.addEventListener('input', e => {
   if (t.matches?.('[data-phone]')) keepCaret(t, phoneLocal(t.value));
   else if (t.matches?.('[data-money]')) keepCaret(t, moneyFmt(t.value));
 }, true);
+
+// Ro'yxatdan tanlanadigan yoki qo'lda yoziladigan maydon (⌄ strelka bilan). getList() — variantlar.
+export function comboBox(input, getList) {
+  if (input.dataset.combo) return;
+  input.dataset.combo = '1';
+  input.removeAttribute('list');
+  input.setAttribute('autocomplete', 'off');
+  const wrap = document.createElement('div');
+  wrap.className = 'combo';
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+  const arrow = document.createElement('button');
+  arrow.type = 'button'; arrow.className = 'combo-arrow'; arrow.tabIndex = -1; arrow.setAttribute('aria-label', "Ro'yxatni ochish");
+  arrow.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>';
+  const list = document.createElement('div');
+  list.className = 'combo-list hidden';
+  wrap.append(arrow, list);
+  let all = false;
+  const draw = () => {
+    const q = input.value.trim().toLowerCase();
+    const items = getList().filter(x => all || !q || x.toLowerCase().includes(q));
+    list.innerHTML = items.map(x => `<button type="button" class="${x === input.value ? 'on' : ''}">${esc(x)}</button>`).join('') || '<div class="hint" style="padding:8px 12px">Ro\'yxatda yo\'q — o\'zingiz yozing</div>';
+    list.classList.remove('hidden');
+  };
+  const close = () => list.classList.add('hidden');
+  arrow.onclick = () => { if (!list.classList.contains('hidden')) { close(); return; } all = true; draw(); input.focus(); };
+  input.addEventListener('focus', () => { all = true; draw(); });
+  input.addEventListener('input', () => { all = false; draw(); });
+  input.addEventListener('blur', () => setTimeout(close, 180));
+  input.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+  list.addEventListener('mousedown', e => e.preventDefault());
+  list.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    input.value = b.textContent; close();
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}

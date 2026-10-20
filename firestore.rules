@@ -37,7 +37,7 @@ service cloud.firestore {
     // Standart ruxsatlar (settings/roles yo'q bo'lsa yoki unda rol bo'lmasa)
     function defaultPerms(r) {
       return {
-        'rahbar': {'ord_all': true, 'calc': true, 'see_cost': true, 'pdf': true, 'assign_usta': true, 'xom_narx': true,
+        'rahbar': {'ord_all': true, 'calc': true, 'see_cost': true, 'pdf': true, 'assign_usta': true, 'kirim': true, 'xom_narx': true,
                    'add_usta': true, 'see_usta_foiz': true, 'staff_view': true, 'final_pdf': true},
         'sotuvchi': {'ord_branch': true, 'ord_create': true, 'ord_edit': true, 'ord_cancel': true, 'calc': true,
                      'discount': true, 'pdf': true, 'pasport_view': true, 'pasport_upload': true},
@@ -61,70 +61,96 @@ service cloud.firestore {
     function workRole(p)  { return p.role != 'admin' && roleMap(p.role).get('work', false) == true; }
 
     // ---------- Buyurtmani yangilash: kim nimani o'zgartira oladi ----------
+    // Bosqichlar: murojaat → skoring (muddatli) → olchov → ustaga → usta_narx → mijoz_tasdiq → kirim
+    //   → shartnoma (muddatli) → usta_tasdiq → kesish → yigish → qadoqlash → yetkazish → yakunlandi
+    function preStages()  { return ['murojaat', 'skoring', 'olchov', 'olchandi', 'ustaga', 'usta_narx', 'mijoz_tasdiq', 'kirim', 'shartnoma']; }
+    function prodStages() { return ['kesish', 'yigish', 'qadoqlash', 'yetkazish']; }
     function canUpdate(p, pm, own, o, n, ch, oid) {
       return p.role == 'admin'
-        || (hp(p, pm, own, 'ord_edit') && (hp(p, pm, own, 'ord_all') || o.branchId == p.branchId) && sellerUpd(p, pm, own, o, n, ch, oid))
+        || (hp(p, pm, own, 'ord_edit') && (hp(p, pm, own, 'ord_all') || o.branchId == p.branchId)
+            && (sellerUpd(p, pm, own, o, n, ch, oid) || sellerMuddat(o, n, ch)))
         || (hp(p, pm, own, 'skoring') && shartUpd(o, n, ch, oid))
         || (hp(p, pm, own, 'olchov') && olchUpd(o, n, ch))
         || (hp(p, pm, own, 'assign_usta') && (rahbarUpd(o, n, ch) || muddatUpd(o, n, ch)
                                               || (hp(p, pm, own, 'calc') && rahbarNarx(o, n, ch))))
-        || (hp(p, pm, own, 'work') && (ustaUpd(o, n, ch) || (o.ustaId == uid() && muddatUpd(o, n, ch))))
+        || (hp(p, pm, own, 'kirim') && kirimUpd(o, n, ch))
+        || (hp(p, pm, own, 'work') && o.ustaId == uid() && (ustaUpd(o, n, ch) || muddatUpd(o, n, ch)))
         || (hp(p, pm, own, 'report') && ch.hasOnly(['reportHidden']));
     }
-    function workerOnly(ch, keys) { return ch.hasOnly(keys.concat(['stage', 'updatedAt', 'log', 'stageAt'])); }
+    function workerOnly(ch, keys) { return ch.hasOnly(keys.concat(['stage', 'updatedAt', 'log', 'stageAt', 'stageBy'])); }
     function move(o, n, a, b)     { return o.stage == a && n.stage == b; }
-    // Sotuvchi: usta/o'lchov maydonlariga tegmaydi
+    // Sotuvchi: usta, o'lchov, kirim va muddat maydonlariga tegmaydi
     function sellerUpd(p, pm, own, o, n, ch, oid) {
       return n.branchId == o.branchId
-        && !ch.hasAny(['no', 'branchId', 'ustaId', 'ustaName', 'olchov', 'createdAt', 'yetkazildi', 'muddat', 'muddatTarix', 'reportHidden'])
-        && (!ch.hasAny(['tolovTuri', 'mebelTuri']) || o.stage == 'murojaat')
+        && !ch.hasAny(['no', 'branchId', 'ustaId', 'ustaName', 'olchov', 'createdAt', 'yetkazildi', 'muddat', 'muddatTarix',
+                       'reportHidden', 'kirimInfo', 'ustaEtiroz', 'muddatTasdiq'])
+        && (!ch.hasAny(['mebelTuri']) || o.stage == 'murojaat')
+        && (!ch.hasAny(['tolovTuri']) || (o.stage in preStages() && n.tolovTuri in ['naqd', 'muddatli']))
         && sellerMove(p, pm, own, o, n, oid);
     }
     function sellerMove(p, pm, own, o, n, oid) {
-      return (n.stage == o.stage && o.stage in ['murojaat', 'skoring', 'olchov', 'olchandi'])
-        || (move(o, n, 'murojaat', 'bekor') && hp(p, pm, own, 'ord_cancel'))
-        || (move(o, n, 'murojaat', 'skoring') && n.tolovTuri == 'muddatli')
+      return (n.stage == o.stage && o.stage in preStages())
+        || ((move(o, n, 'murojaat', 'bekor') || move(o, n, 'mijoz_tasdiq', 'bekor')) && hp(p, pm, own, 'ord_cancel'))
+        // muddatli: skoringga (rasmiylashtirish, narx limitdan oshishi, to'lov turini almashtirish)
+        || (n.stage == 'skoring' && o.stage in preStages() && n.tolovTuri == 'muddatli')
+        // naqdga o'tkazilsa — skoringdan chiqadi
+        || (o.stage == 'skoring' && n.tolovTuri == 'naqd' && n.stage in ['olchov', 'ustaga', 'usta_narx', 'mijoz_tasdiq', 'kirim'])
         || (move(o, n, 'murojaat', 'olchov') && n.tolovTuri == 'naqd' && n.mebelTuri != 'tayyor' && n.olchovchiId != '')
         || (move(o, n, 'murojaat', 'ustaga') && n.tolovTuri == 'naqd' && n.mebelTuri == 'tayyor')
-        || (move(o, n, 'olchandi', 'skoring') && n.tolovTuri == 'muddatli')
-        || (move(o, n, 'olchandi', 'ustaga') && (n.tolovTuri == 'naqd' || withinLimit(get(pulPath(oid)).data)));
+        || (move(o, n, 'olchandi', 'ustaga') && (n.tolovTuri == 'naqd' || withinLimit(get(pulPath(oid)).data)))
+        || move(o, n, 'mijoz_tasdiq', 'kirim')
+        || move(o, n, 'shartnoma', 'usta_tasdiq');
+    }
+    // Sotuvchi: usta o'zgartirgan muddatga mijoz javobi (rozi emas — eski sana qaytadi)
+    function sellerMuddat(o, n, ch) {
+      return o.stage in prodStages() && n.stage == o.stage
+        && o.get('muddatTasdiq', {'holat': ''}).holat == 'kutilmoqda'
+        && ch.hasOnly(['muddatTasdiq', 'muddat', 'muddatTarix', 'updatedAt', 'log'])
+        && (!ch.hasAny(['muddat']) || n.muddat == o.muddatTasdiq.eski);
     }
     function withinLimit(pul) { return pul.result.tanlangan.qoldiq <= pul.skoring.limit; }
     // Shartnomachi: faqat qaror (pul/main dagi skoring bilan bitta paketda)
     function shartUpd(o, n, ch, oid) {
-      return o.stage == 'skoring' && o.tolovTuri == 'muddatli' && workerOnly(ch, ['bekorSabab'])
-        && n.stage in ['olchov', 'ustaga', 'bekor']
+      return o.stage == 'skoring' && o.tolovTuri == 'muddatli' && workerOnly(ch, ['bekorSabab', 'skQaytish'])
+        && n.stage in ['olchov', 'ustaga', 'bekor', 'usta_narx', 'mijoz_tasdiq', 'kirim', 'shartnoma', 'usta_tasdiq']
         && skoringMatches(getAfter(pulPath(oid)).data.skoring, n.stage);
     }
     function skoringMatches(sk, stage) { return sk.by == uid() && sk.qaror == (stage == 'bekor' ? 'bekor' : 'tasdiq'); }
     // O'lchovchi: faqat o'ziga biriktirilgan o'lchov
     function olchUpd(o, n, ch) {
-      return o.olchovchiId == uid() && move(o, n, 'olchov', 'olchandi') && workerOnly(ch, ['olchov'])
+      return o.olchovchiId == uid() && o.stage == 'olchov' && n.stage in ['olchandi', 'ustaga'] && workerOnly(ch, ['olchov'])
         && n.olchov.u == uid() && str(n.olchov.izoh, 3000);
     }
-    // Rahbar: ustaga biriktirish yoki almashtirish (usta haqi pul/main ga yoziladi)
+    // Rahbar: ustaga biriktirish yoki almashtirish (usta haqi pul/main ga yoziladi); e'tirozda qayta o'lchovga
     function rahbarUpd(o, n, ch) {
-      return o.stage in ['ustaga', 'usta_tasdiq'] && n.stage == 'usta_tasdiq'
-        && workerOnly(ch, ['ustaId', 'ustaName'])
-        && workRole(get(/databases/$(database)/documents/profiles/$(n.ustaId)).data);
+      return (o.stage in ['ustaga', 'usta_narx', 'usta_tasdiq'] && n.stage in ['usta_narx', 'usta_tasdiq']
+              && workerOnly(ch, ['ustaId', 'ustaName', 'ustaEtiroz'])
+              && workRole(get(/databases/$(database)/documents/profiles/$(n.ustaId)).data))
+        || (move(o, n, 'usta_narx', 'olchov') && workerOnly(ch, ['ustaEtiroz']));
     }
     // Muddatni o'zgartirish (usta yoki rahbar): bosqich o'zgarmaydi, sababi tarixga yoziladi
     function muddatUpd(o, n, ch) {
-      return o.stage in ['kesish', 'yigish', 'qadoqlash', 'yetkazish'] && n.stage == o.stage
-        && ch.hasOnly(['muddat', 'muddatTarix', 'updatedAt', 'log']) && ch.hasAll(['muddat', 'muddatTarix'])
+      return o.stage in prodStages() && n.stage == o.stage
+        && ch.hasOnly(['muddat', 'muddatTarix', 'muddatTasdiq', 'updatedAt', 'log']) && ch.hasAll(['muddat', 'muddatTarix'])
         && n.muddat is string && n.muddatTarix.size() == o.get('muddatTarix', []).size() + 1;
     }
-    // Rahbar: usta biriktirish bosqichida mebel narxini o'zgartirish (limitdan oshsa — shartnomachiga qaytadi)
+    // Rahbar: usta bosqichlarida mebel narxini o'zgartirish (limitdan oshsa — shartnomachiga qaytadi)
     function rahbarNarx(o, n, ch) {
-      return o.stage in ['ustaga', 'usta_tasdiq']
-        && ch.hasOnly(['hasCalc', 'ish', 'taklifUstaId', 'taklifUstaName', 'updatedAt', 'log', 'stage', 'stageAt'])
+      return o.stage in ['ustaga', 'usta_narx', 'usta_tasdiq']
+        && ch.hasOnly(['hasCalc', 'ish', 'taklifUstaId', 'taklifUstaName', 'updatedAt', 'log', 'stage', 'stageAt', 'skQaytish'])
         && (n.stage == o.stage || (n.stage == 'skoring' && o.tolovTuri == 'muddatli'));
     }
-    // Usta: o'z ishining bosqichlari, ketma-ket. Muddat faqat ishni qabul qilganda belgilanadi.
+    // Admin / rahbar: mahsulotni kirim qilish → muddatlida shartnomaga, naqdda ustaga
+    function kirimUpd(o, n, ch) {
+      return o.stage == 'kirim' && workerOnly(ch, ['kirimInfo'])
+        && ((n.stage == 'shartnoma' && o.tolovTuri == 'muddatli') || (n.stage == 'usta_tasdiq' && o.tolovTuri != 'muddatli'));
+    }
+    // Usta: o'lchov va narxga rozilik (yoki e'tiroz), so'ng o'z ishining bosqichlari ketma-ket
     function ustaUpd(o, n, ch) {
-      return o.ustaId == uid() && workerOnly(ch, ['yetkazildi', 'muddat'])
+      return workerOnly(ch, ['yetkazildi', 'muddat', 'ustaEtiroz'])
         && (!ch.hasAny(['muddat']) || move(o, n, 'usta_tasdiq', 'kesish'))
-        && (move(o, n, 'usta_tasdiq', 'kesish') || move(o, n, 'kesish', 'yigish') || move(o, n, 'yigish', 'qadoqlash')
+        && (move(o, n, 'usta_narx', 'mijoz_tasdiq') || (o.stage == 'usta_narx' && n.stage == 'usta_narx' && ch.hasOnly(['ustaEtiroz', 'updatedAt', 'log']))
+            || move(o, n, 'usta_tasdiq', 'kesish') || move(o, n, 'kesish', 'yigish') || move(o, n, 'yigish', 'qadoqlash')
             || move(o, n, 'qadoqlash', 'yetkazish') || move(o, n, 'yetkazish', 'yakunlandi'));
     }
 
@@ -214,7 +240,7 @@ service cloud.firestore {
             && newData().get('ustaId', null) == resource.data.get('ustaId', null);
         }
         function pulRead(p, pm, own, d) {
-          return p.role == 'admin' || hp(p, pm, own, 'ord_all') || hp(p, pm, own, 'assign_usta') || hp(p, pm, own, 'report')
+          return p.role == 'admin' || hp(p, pm, own, 'ord_all') || hp(p, pm, own, 'assign_usta') || hp(p, pm, own, 'report') || hp(p, pm, own, 'kirim')
             || (hp(p, pm, own, 'ord_branch') && d.branchId == p.branchId)
             || (hp(p, pm, own, 'skoring') && ord().tolovTuri == 'muddatli');
         }
@@ -227,13 +253,14 @@ service cloud.firestore {
         function pulUpdate(p, pm, own, d, n) {
           return p.role == 'admin'
             || (hp(p, pm, own, 'ord_edit') && (hp(p, pm, own, 'ord_all') || d.branchId == p.branchId)
-                && n.branchId == d.branchId && ordAfter().stage in ['murojaat', 'olchandi']
-                && n.get('skoring', null) == d.get('skoring', null) && sameUsta())
+                && n.branchId == d.branchId && ordAfter().stage in preStages()
+                && n.get('skoring', null) == d.get('skoring', null) && n.get('kirim', null) == d.get('kirim', null) && sameUsta())
             || (hp(p, pm, own, 'skoring') && ord().stage == 'skoring' && ord().tolovTuri == 'muddatli'
                 && changed().hasOnly(['skoring']) && n.skoring.by == uid() && n.skoring.qaror in ['tasdiq', 'bekor'])
-            || (hp(p, pm, own, 'assign_usta') && ord().stage in ['ustaga', 'usta_tasdiq']
+            || (hp(p, pm, own, 'assign_usta') && ord().stage in ['ustaga', 'usta_narx', 'usta_tasdiq']
                 && changed().hasOnly(['ustaId', 'ustaHaqi', 'ustaFoiz']))
-            || (hp(p, pm, own, 'assign_usta') && hp(p, pm, own, 'calc') && ord().stage in ['ustaga', 'usta_tasdiq']
+            || (hp(p, pm, own, 'kirim') && ord().stage == 'kirim' && changed().hasOnly(['kirim']))
+            || (hp(p, pm, own, 'assign_usta') && hp(p, pm, own, 'calc') && ord().stage in ['ustaga', 'usta_narx', 'usta_tasdiq']
                 && n.branchId == d.branchId && n.get('skoring', null) == d.get('skoring', null)
                 && n.get('ustaId', null) == d.get('ustaId', null) && n.get('ustaFoiz', null) == d.get('ustaFoiz', null));
         }
@@ -260,6 +287,10 @@ service cloud.firestore {
     // ---------- Rasmlar (pasport, o'lchov, yetkazish) ----------
     match /photos/{id} {
       function ordOf(o) { return get(orderPath(o)).data; }
+      function mediaStage(k, st) {
+        return (k == 'tasdiq' && st == 'mijoz_tasdiq') || (k == 'shartnoma' && st == 'shartnoma')
+          || (k == 'muddat' && st in ['kesish', 'yigish', 'qadoqlash', 'yetkazish']);
+      }
       function phRead(p, pm, own, d) {
         return p.role == 'admin' || d.kind != 'pasport'
           || (hp(p, pm, own, 'pasport_view') && (hp(p, pm, own, 'ord_all') || hp(p, pm, own, 'skoring') || d.branchId == p.branchId));
@@ -272,7 +303,11 @@ service cloud.firestore {
           || (n.kind == 'olchov' && hp(p, pm, own, 'olchov') && ordOf(n.orderId).olchovchiId == uid()
               && ordOf(n.orderId).stage == 'olchov')
           || (n.kind == 'yetkazish' && hp(p, pm, own, 'work') && ordOf(n.orderId).ustaId == uid()
-              && ordOf(n.orderId).stage == 'yetkazish');
+              && ordOf(n.orderId).stage == 'yetkazish')
+          // Mijoz tasdig'i (narx / yangi muddat) va shartnoma — sotuvchi; kirim hujjati — kirim ruxsati borlar
+          || (n.kind in ['tasdiq', 'shartnoma', 'muddat'] && hp(p, pm, own, 'ord_edit')
+              && (hp(p, pm, own, 'ord_all') || n.branchId == p.branchId) && mediaStage(n.kind, ordOf(n.orderId).stage))
+          || (n.kind == 'kirim' && hp(p, pm, own, 'kirim') && ordOf(n.orderId).stage == 'kirim');
       }
       allow read: if isStaff() && phRead(me(), roleMap(me().role), ownerUid(), resource.data);
       allow create: if isStaff() && newData().createdBy == uid()
