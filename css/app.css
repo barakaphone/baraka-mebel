@@ -304,3 +304,32 @@ body:has(#installBar) .cw-fab{bottom:calc(100px + env(safe-area-inset-bottom,0px
 .logo img{height:38px;width:auto;display:block}
 .logo.big img{height:64px;margin:0 auto}
 .cw-logo img{object-fit:contain;padding:3px}
+
+/* Muddat: teskari sanoq */
+.badge.wait{background:var(--gSoft);color:var(--g)}
+.cdown{display:flex;align-items:center;gap:14px;border:2px solid var(--gLine);background:var(--gSoft);border-radius:14px;padding:10px 16px;margin:0 0 14px}
+.cdown .n{font-family:Poppins,sans-serif;font-size:38px;font-weight:700;color:var(--g);line-height:1;min-width:44px;text-align:center}
+.cdown b{color:var(--g);font-size:16px}
+.cdown.soon{border-color:var(--yLine);background:var(--ySoft)}.cdown.soon .n,.cdown.soon b{color:var(--yDeep)}
+.cdown.late{border-color:#F0B9B4;background:var(--badSoft)}.cdown.late .n,.cdown.late b{color:var(--bad)}
+
+/* Bildirishnomalar */
+.icon-btn.bell{position:relative;color:var(--g)}
+.bell-cnt{position:absolute;top:-6px;right:-6px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--bad);color:#fff;font-size:11.5px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #fff}
+.nlist{display:flex;flex-direction:column;gap:8px}
+.nitem{text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:3px}
+.nitem.un{border-color:var(--gLine);background:var(--gSoft);box-shadow:inset 3px 0 0 var(--g)}
+.nitem .nt{display:flex;justify-content:space-between;gap:10px}.nitem .nt span{font-size:12px;color:var(--muted);white-space:nowrap}
+
+/* Murojaatlar tahlili */
+.an-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;border:1px dashed var(--gLine);background:var(--gSoft);color:var(--g);border-radius:12px;padding:10px 14px;font-weight:700;margin:0 0 12px}
+.an-toggle span{font-weight:500;font-size:13px}
+.an-panel{border:1px solid var(--gLine);background:var(--surface);border-radius:14px;padding:12px 14px;margin:0 0 14px}
+.an-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.an-head b{flex:1;color:var(--g);font-size:16px}
+.an-head select{width:auto}
+.an-panel .stats{margin-bottom:12px}
+.an-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.an-box{border:1px solid var(--line);border-radius:12px;padding:8px 10px;min-width:0}
+.an-box h4{margin:2px 0 6px;font-size:14px}
+.an-box .tbl td{padding:5px 6px;font-size:13.5px}
+.an-box .tbl td:first-child{word-break:break-word}

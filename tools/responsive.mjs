@@ -54,6 +54,7 @@ for (const [size, w, h] of SIZES) {
   let p = await session('901111111', 'AdminParol123!', w, h);
   await check(p, size, 'admin-bosh', shot);
   await tab(p, 'orders'); await p.click('[data-chip="all"]'); await check(p, size, 'buyurtmalar', shot);
+  await p.click('#anT'); await check(p, size, 'tahlil', shot); await p.click('#anT');
   await p.click('[data-open]'); await p.waitForSelector('#back'); await check(p, size, 'kartochka', shot);
   await tab(p, 'calc'); await p.check('[data-sec="Buyurtma!B11"]'); await p.check('[data-sec="Buyurtma!B13"]'); await check(p, size, 'kalkulyator', shot);
   await tab(p, 'report'); await p.waitForSelector('#rpP'); await check(p, size, 'hisobot', shot);

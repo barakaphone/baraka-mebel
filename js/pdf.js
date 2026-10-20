@@ -21,20 +21,33 @@ const W = 700;
 const td = (extra = '') => `padding:5px 6px;border:1px solid #DCE2EC;vertical-align:top;word-break:break-word;${extra}`;
 const th = (right) => `padding:6px;border:1px solid #DCE2EC;text-align:${right ? 'right' : 'left'};background:#EAF0FA;font-weight:700`;
 
+// Safari (Mac, iPhone) ekrandan tashqaridagi (left:-10000px) elementni noto'g'ri suratga oladi —
+// faqat bitta tor ustun chiqadi. Shuning uchun sahifa ekranning chap-yuqori burchagida yasaladi,
+// ustidan "tayyorlanmoqda" pardasi yopib turadi (html2canvas faqat elementning o'zini chizadi).
 async function render(html, filename) {
   await loadLib();
+  const cover = document.createElement('div');
+  cover.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#fff;display:flex;align-items:center;justify-content:center;font:600 16px system-ui,sans-serif;color:#00297D';
+  cover.textContent = 'PDF tayyorlanmoqda…';
   const holder = document.createElement('div');
-  holder.style.cssText = 'position:fixed;left:-10000px;top:0;width:' + W + 'px;background:#fff';
+  holder.style.cssText = `position:absolute;left:0;top:0;width:${W}px;background:#fff;z-index:2147482000`;
   holder.innerHTML = html;
-  document.body.appendChild(holder);
+  document.body.append(holder, cover);
+  const sx = window.scrollX, sy = window.scrollY;
+  window.scrollTo(0, 0);
   try {
+    // Rasmlar (logotip, yetkazish rasmlari) yuklanib bo'lsin
+    await Promise.all([...holder.querySelectorAll('img')].map(i => i.complete ? 0 : new Promise(r => { i.onload = i.onerror = r; })));
+    const el = holder.firstElementChild;
+    // iPhone'da canvas hajmi cheklangan (~16 mln piksel) — uzun hujjatda sifat biroz pasaytiriladi
+    const scale = Math.max(1, Math.min(2, Math.sqrt(16e6 / (W * Math.max(1, el.scrollHeight)))));
     await window.html2pdf().set({
       margin: [10, 10, 12, 10], filename, image: { type: 'jpeg', quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, width: W, windowWidth: W },
+      html2canvas: { scale, useCORS: true, width: W, windowWidth: W, x: 0, y: 0, scrollX: 0, scrollY: 0, backgroundColor: '#ffffff' },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
       pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.keep'] },
-    }).from(holder.firstElementChild).save();
-  } finally { holder.remove(); }
+    }).from(el).save();
+  } finally { holder.remove(); cover.remove(); window.scrollTo(sx, sy); }
 }
 const safeName = s => (s || 'mijoz').replace(/[^\p{L}\p{N}]+/gu, '_');
 
@@ -145,7 +158,7 @@ export async function downloadFinalPdf(o, S, ctx) {
   }
   let photos = [];
   try { photos = (await getDocs(query(collection(ctx.db, 'photos'), where('orderId', '==', o.id), where('kind', '==', 'yetkazish')))).docs.map(d => d.data().data); } catch (e) { /* ruxsat yo'q */ }
-  const who = [['Sotuvchi', o.sellerName], ["O'lchovchi", o.olchovchiName], ['Usta', o.ustaName]].filter(x => x[1]);
+  const who = [['Sotuvchi', o.sellerName], ["O'lchovchi", o.olchovchiName && ctx.staffName(o.olchovchiId, o.olchovchiName)], ['Usta', o.ustaName && ctx.staffName(o.ustaId, o.ustaName)]].filter(x => x[1]);
   const skLog = (o.log || []).find(l => /Shartnoma chiqarilsin|Shartnoma bekor/.test(l.m));
   if (skLog) who.splice(1, 0, ['Shartnomachi', skLog.n]);
   const html = `

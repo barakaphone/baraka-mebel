@@ -54,7 +54,10 @@ export function renderSettings(page, ctx) {
       body = `<div class="row2" style="align-items:flex-start">
         <div class="card"><h3>Mebel kategoriyalari</h3>${listEd('kategoriyalar', m.kategoriyalar)}</div>
         <div class="card"><h3>Murojaat statuslari</h3><p class="hint" style="margin-top:-6px">Yangi murojaat doim "Yangi murojaat" statusi bilan tushadi.</p>${listEd('statuslar', m.statuslar, true)}</div></div>
-        <div class="card"><h3>Rasmlar</h3><div class="field" style="max-width:320px"><label>O'lchov va yetkazishda kamida necha rasm</label><input class="inp" id="minRasm" inputmode="numeric" value="${esc(m.minRasm || 4)}"></div></div>
+        <div class="row2" style="align-items:flex-start">
+          <div class="card"><h3>Rasmlar</h3><div class="field"><label>O'lchov va yetkazishda kamida necha rasm</label><input class="inp" id="minRasm" inputmode="numeric" value="${esc(m.minRasm || 4)}"></div></div>
+          <div class="card"><h3>Usta muddati</h3><div class="field"><label>Muddatdan o'tsa jarima, %</label><input class="inp" id="jarimaFoiz" inputmode="decimal" value="${esc(m.jarimaFoiz ?? 30)}"><div class="hint">Usta ishni qabul qilayotganda ogohlantirish sifatida ko'rsatiladi. 0 — ko'rsatilmaydi.</div></div></div>
+        </div>
         <div class="card"><h3>Kompaniya (PDF narx taklifida)</h3>${rowTable(rows.filter(r => r.text))}</div>`;
       break;
     }
@@ -74,15 +77,19 @@ export function renderSettings(page, ctx) {
       const sheet = curTab === 'laminat' ? 'Laminat xom ashyo' : 'Krasheniy xom ashyo';
       const deleted = new Set(S.settings.xomDeleted);
       const xr = K.xomRows(curTab);
-      const custom = S.settings.xomCustom.filter(c => !c.deleted && (c.variant === 'ikkalasi' || c.variant === curTab || !c.variant));
+      const forTab = c => c.variant === 'ikkalasi' || c.variant === curTab || !c.variant;
+      const custom = S.settings.xomCustom.filter(c => !c.deleted && forTab(c));
+      const customDel = S.settings.xomCustom.filter(c => c.deleted && forTab(c));
       body = `<p class="hint">Narx 1 birlik uchun. "Kursga bog'liq" — narx kiritilgan kundagi kursda yozilgan, kurs o'zgarsa avtomatik qayta hisoblanadi. Otxod — zapas foizi.</p>
-        <div class="toolbar"><button class="btn pri sm" id="addXom">+ Xom ashyo qo'shish</button></div>
-        ${custom.length ? `<h3>Qo'shimcha xom ashyolar</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Guruh</th><th>Xom ashyo</th><th>Birlik</th><th>Otxod</th><th>Narx</th><th>Sarf (1 donaga)</th><th></th></tr></thead><tbody>
-          ${custom.map(c => `<tr><td>${esc(c.group || '')}</td><td><b>${esc(c.name)}</b><div class="hint">${esc(VARIANTS.find(v => v[0] === c.variant)?.[1] || '')}</div></td><td>${esc(c.unit)}</td><td>${esc(+(Number(c.otx || 0) * 100).toFixed(2))}%</td>
+        <div class="toolbar"><button class="btn pri sm" id="addXom">+ Xom ashyo qo'shish</button><button class="btn gold sm" id="addFur">+ Furnitura qo'shish</button></div>
+        ${custom.length ? `<h3>Qo'shilgan xom ashyo va furnituralar</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Guruh</th><th>Xom ashyo</th><th>Birlik</th><th>Otxod</th><th>Narx</th><th>Sarf (1 donaga)</th><th></th></tr></thead><tbody>
+          ${custom.map(c => `<tr><td>${esc(c.group || '')}</td><td><b>${esc(c.name)}</b><div class="hint">${esc(VARIANTS.find(v => v[0] === c.variant)?.[1] || '')}${c.izoh ? ' · ' + esc(c.izoh) : ''}</div></td><td>${esc(c.unit)}</td><td>${esc(+(Number(c.otx || 0) * 100).toFixed(2))}%</td>
             <td>${esc(showNum(c.narx))} <span class="hint">${esc(c.tur === 'Dollar' ? '$' : "so'm")}</span></td>
             <td class="hint">${K.SARF_KEYS.filter(([k]) => Number(c.sarf?.[k])).map(([k, l]) => `${esc(l)}: ${c.sarf[k]}`).join(', ') || '—'}</td>
             <td style="white-space:nowrap"><button class="btn sec sm" data-cedit="${esc(c.id)}">Tahrirlash</button> <button class="btn sec sm" data-cdel="${esc(c.id)}">🗑</button></td></tr>`).join('')}
-        </tbody></table></div><h3>Asosiy ro'yxat</h3>` : ''}
+        </tbody></table></div>` : ''}
+        ${customDel.length ? `<details class="grp" style="margin-top:10px"><summary>O'chirilgan qo'shimchalar — ${customDel.length} ta</summary><div style="padding:0 10px 10px">${customDel.map(c => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)"><span><b>${esc(c.name)}</b> <span class="hint">${esc(c.group || '')}</span></span><button class="btn sec sm" data-crest="${esc(c.id)}">↺ Tiklash</button></div>`).join('')}</div></details>` : ''}
+        ${custom.length || customDel.length ? `<h3>Asosiy ro'yxat</h3>` : ''}
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Guruh</th><th>Xom ashyo</th><th>Birlik</th><th>Otxod, %</th><th>Narx turi</th><th>Narx</th><th>Izoh</th><th></th></tr></thead><tbody>
         ${xr.map(r => { const dk = `${sheet}#${r.r}`, del = deleted.has(dk); return `<tr style="${del ? 'opacity:.45' : ''}"><td>${esc(r.group || '')}</td><td>${esc(K.xomName(r, st))}${del ? ' <span class="badge grey">o\'chirilgan</span>' : ''}</td><td>${esc(r.unit)}</td>
           <td style="min-width:80px">${r.otx.ro ? '<span class="muted">—</span>' : inp(r.otx.key, 'pct')}</td>
@@ -142,7 +149,9 @@ export function renderSettings(page, ctx) {
     await ctx.loadStatic(); renderSettings(page, ctx);
   };
   const ax = page.querySelector('#addXom');
-  if (ax) ax.onclick = () => customForm(ctx, null, curTab, async c => saveXomMeta([...S.settings.xomCustom, c], S.settings.xomDeleted));
+  if (ax) ax.onclick = () => customForm(ctx, null, curTab, async c => saveXomMeta([...S.settings.xomCustom, c], S.settings.xomDeleted), 'Asosiy');
+  const af = page.querySelector('#addFur');
+  if (af) af.onclick = () => customForm(ctx, null, curTab, async c => saveXomMeta([...S.settings.xomCustom, c], S.settings.xomDeleted), 'Furnitura');
   page.querySelectorAll('[data-cedit]').forEach(b => b.onclick = () => {
     const c = S.settings.xomCustom.find(x => x.id === b.dataset.cedit);
     customForm(ctx, c, curTab, async nc => saveXomMeta(S.settings.xomCustom.map(x => x.id === nc.id ? nc : x), S.settings.xomDeleted));
@@ -150,7 +159,10 @@ export function renderSettings(page, ctx) {
   page.querySelectorAll('[data-cdel]').forEach(b => b.onclick = async () => {
     const c = S.settings.xomCustom.find(x => x.id === b.dataset.cdel);
     if (!await confirmBox(`"${esc(c.name)}" o'chirilsinmi?`, "O'chirish", true)) return;
-    try { await saveXomMeta(S.settings.xomCustom.filter(x => x.id !== c.id), S.settings.xomDeleted); toast("O'chirildi"); } catch (e) { toast(errText(e), true); }
+    try { await saveXomMeta(S.settings.xomCustom.map(x => x.id === c.id ? { ...x, deleted: true } : x), S.settings.xomDeleted); toast("O'chirildi"); } catch (e) { toast(errText(e), true); }
+  });
+  page.querySelectorAll('[data-crest]').forEach(b => b.onclick = async () => {
+    try { await saveXomMeta(S.settings.xomCustom.map(x => x.id === b.dataset.crest ? { ...x, deleted: false } : x), S.settings.xomDeleted); toast('Tiklandi'); } catch (e) { toast(errText(e), true); }
   });
   page.querySelectorAll('[data-bdel]').forEach(b => b.onclick = async () => {
     if (!await confirmBox("Bu xom ashyo kalkulyatorning o'zi hisoblaydigan ro'yxatda. O'chirilsa, u hisobdan chiqadi va <b>narx kamayadi</b>. Davom etasizmi?", "Hisobdan chiqarish", true)) return;
@@ -181,7 +193,8 @@ export function renderSettings(page, ctx) {
       if (admin && Object.keys(kalk).length) writes.push(setDoc(doc(ctx.db, 'settings', 'kalk'), { cells: kalk, updatedAt: serverTimestamp() }, { merge: true }));
       if (admin && curTab === 'umumiy') {
         const list = n => [...page.querySelectorAll(`[data-list="${n}"] .it input`)].map(i => i.value.trim()).filter(Boolean);
-        const main = { kategoriyalar: list('kategoriyalar'), statuslar: list('statuslar'), minRasm: Math.max(1, Math.round(parseNum(page.querySelector('#minRasm').value)) || 4) };
+        const main = { kategoriyalar: list('kategoriyalar'), statuslar: list('statuslar'), minRasm: Math.max(1, Math.round(parseNum(page.querySelector('#minRasm').value)) || 4),
+          jarimaFoiz: Math.min(100, Math.max(0, parseNum(page.querySelector('#jarimaFoiz').value))) };
         if (!main.kategoriyalar.length || !main.statuslar.length) throw new Error("Ro'yxat bo'sh bo'lmasin");
         writes.push(setDoc(doc(ctx.db, 'settings', 'main'), main, { merge: true }));
       }
@@ -194,17 +207,19 @@ export function renderSettings(page, ctx) {
 }
 
 // Yangi xom ashyo: sarfi har bir mahsulotning 1 donasiga
-function customForm(ctx, c, tab, onSave) {
-  const v = c || { group: 'Furnitura', unit: 'dona', tur: "So'm (qat'iy)", otx: 0, variant: tab, sarf: {} };
-  const m = modal(`<h2>${c ? 'Xom ashyoni tahrirlash' : 'Yangi xom ashyo'}</h2><form id="cf">
-    <div class="field"><label>Nomi *</label><input class="inp" name="name" required maxlength="80" value="${esc(v.name || '')}"></div>
+function customForm(ctx, c, tab, onSave, group = 'Furnitura') {
+  const fur = (c?.group || group) === 'Furnitura';
+  const v = c || { group, unit: 'dona', tur: "So'm (qat'iy)", otx: 0, variant: fur ? 'ikkalasi' : tab, sarf: {} };
+  const m = modal(`<h2>${c ? (fur ? 'Furniturani tahrirlash' : 'Xom ashyoni tahrirlash') : fur ? 'Yangi furnitura' : 'Yangi xom ashyo'}</h2><form id="cf">
+    <div class="field"><label>Nomi *</label><input class="inp" name="name" required maxlength="80" value="${esc(v.name || '')}" placeholder="${fur ? 'Masalan: Gaz lift 100N, Petlya Blum, Ruchka 128 mm' : ''}"></div>
     <div class="row2"><div class="field"><label>Guruhi</label><select class="inp" name="group">${GROUPS.map(g => `<option ${g === v.group ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select></div>
       <div class="field"><label>Birligi</label><select class="inp" name="unit">${UNITS.map(g => `<option ${g === v.unit ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select></div></div>
     <div class="row2"><div class="field"><label>Narx turi</label><select class="inp" name="tur">${K.NARX_TURI.map(g => `<option ${g === v.tur ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select></div>
       <div class="field"><label>Narxi (1 birlik) *</label><input class="inp" name="narx" inputmode="decimal" required value="${esc(showNum(v.narx))}"></div></div>
     <div class="row2"><div class="field"><label>Otxod, %</label><input class="inp" name="otx" inputmode="decimal" value="${esc(+(Number(v.otx || 0) * 100).toFixed(2))}"></div>
       <div class="field"><label>Qaysi variantda ishlatiladi</label><select class="inp" name="variant">${VARIANTS.map(([k, l]) => `<option value="${k}" ${k === v.variant ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div></div>
-    <h3>Sarfi: 1 dona mahsulotga necha birlik</h3>
+    <div class="field"><label>Izoh</label><input class="inp" name="izoh" maxlength="120" value="${esc(v.izoh || '')}"></div>
+    <h3>Sarfi: 1 dona mahsulotga necha ${fur ? 'dona / komplekt' : 'birlik'}</h3>
     <div class="pay-grid">${K.SARF_KEYS.map(([k, l]) => `<div class="field"><label><span class="lt">${esc(l)}</span></label><input class="inp sm" data-sarf="${k}" inputmode="decimal" value="${esc(v.sarf?.[k] || '')}" placeholder="0"></div>`).join('')}</div>
     <p class="hint">Hisob: mahsulot soni × sarf × (1 + otxod) × narx. Natija o'sha mahsulot xom ashyosiga qo'shiladi, keyin usta haqi va Baraka ustamasi ham undan hisoblanadi.</p>
     <div class="err hidden" id="cfErr"></div><button class="btn pri block">Saqlash</button></form>`, { wide: true });
@@ -217,7 +232,7 @@ function customForm(ctx, c, tab, onSave) {
       f.querySelectorAll('[data-sarf]').forEach(i => { const n = parseNum(i.value); if (n) sarf[i.dataset.sarf] = n; });
       if (!Object.keys(sarf).length) throw new Error("Kamida bitta mahsulot uchun sarfni yozing");
       const nc = { id: c?.id || 'x' + Date.now().toString(36), name: f.name.value.trim(), group: f.group.value, unit: f.unit.value, tur: f.tur.value,
-        narx: parseNum(f.narx.value), otx: parseNum(f.otx.value) / 100, variant: f.variant.value, sarf };
+        narx: parseNum(f.narx.value), otx: parseNum(f.otx.value) / 100, variant: f.variant.value, sarf, izoh: f.izoh.value.trim() };
       if (!nc.name || !nc.narx) throw new Error('Nomi va narxini kiriting');
       await onSave(nc);
       m.close(); toast('Saqlandi');

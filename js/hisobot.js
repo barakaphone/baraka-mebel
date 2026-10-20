@@ -1,8 +1,8 @@
 // Hisobot: rasmiylashtirilgan buyurtmalar bo'yicha tannarx, chegirma, sotilgan summa va foyda
-import { getDocs, collectionGroup } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-import { esc, uzs, pct, toast, errText } from './util.js';
+import { getDocs, collectionGroup, doc, updateDoc, deleteField } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { esc, uzs, pct, toast, errText, confirmBox, fdt } from './util.js';
 
-const F = { period: 'month', from: '', to: '', branch: '', seller: '', done: false };
+const F = { period: 'month', from: '', to: '', done: false };
 let xlsxPromise = null;
 const loadXlsx = () => window.XLSX ? Promise.resolve() : (xlsxPromise ||= new Promise((res, rej) => {
   const s = document.createElement('script');
@@ -46,20 +46,19 @@ export async function renderReport(page, ctx) {
   } catch (e) { page.innerHTML = `<h2>Hisobot</h2><div class="err">${esc(errText(e))}</div>`; return; }
   const draw = () => {
     const [a, b] = range();
-    let list = S.orders.filter(o => o.formalAt && o.stage !== 'bekor' && pul.get(o.id)?.result && o.formalAt >= a && o.formalAt < b);
-    if (F.branch) list = list.filter(o => o.branchId === F.branch);
-    if (F.seller) list = list.filter(o => o.sellerId === F.seller);
-    if (F.done) list = list.filter(o => o.stage === 'yakunlandi');
-    list.sort((x, y) => y.formalAt - x.formalAt);
+    let all = ctx.applyFilters(S.orders).filter(o => o.formalAt && o.stage !== 'bekor' && pul.get(o.id)?.result && o.formalAt >= a && o.formalAt < b);
+    if (F.done) all = all.filter(o => o.stage === 'yakunlandi');
+    all.sort((x, y) => y.formalAt - x.formalAt);
+    // O'chirilganlar hisobotga va jami summalarga kirmaydi, pastdagi alohida bo'limda turadi
+    const list = all.filter(o => !o.reportHidden), hidden = all.filter(o => o.reportHidden);
     const rows = list.map(o => rowOf(o, pul.get(o.id)));
+    const hrows = hidden.map(o => rowOf(o, pul.get(o.id)));
     const sum = k => rows.reduce((s, r) => s + r[k], 0);
-    const sellers = [...new Map(S.orders.filter(o => o.sellerId).map(o => [o.sellerId, o.sellerName])).entries()];
     page.innerHTML = `<h2>Hisobot</h2>
       <div class="toolbar">
         <select class="inp" id="rpP" style="flex:0 1 170px">${[['month', 'Bu oy'], ['prev', "O'tgan oy"], ['year', 'Bu yil'], ['all', 'Hammasi'], ['custom', 'Tanlangan davr']].map(([v, l]) => `<option value="${v}" ${F.period === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
         ${F.period === 'custom' ? `<input class="inp" type="date" id="rpFrom" value="${F.from}" style="flex:0 1 160px"><input class="inp" type="date" id="rpTo" value="${F.to}" style="flex:0 1 160px">` : ''}
-        ${S.branches.length > 1 ? `<select class="inp" id="rpB" style="flex:0 1 180px"><option value="">Barcha filiallar</option>${S.branches.map(x => `<option value="${x.id}" ${F.branch === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>` : ''}
-        <select class="inp" id="rpS" style="flex:0 1 180px"><option value="">Barcha sotuvchilar</option>${sellers.map(([id, n]) => `<option value="${id}" ${F.seller === id ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+        ${ctx.filterHtml()}
         <label class="showpw" style="margin:0"><input type="checkbox" id="rpD" ${F.done ? 'checked' : ''}> Faqat yakunlanganlar</label>
         <button class="btn sec" id="rpX">⬇ Excel</button>
       </div>
@@ -69,20 +68,33 @@ export async function renderReport(page, ctx) {
         <div class="stat"><b style="font-size:18px">${uzs(sum('tan'))}</b><span>Tannarx</span></div>
         <div class="stat"><b style="font-size:18px;color:${sum('foyda') < 0 ? 'var(--bad)' : 'var(--ok)'}">${uzs(sum('foyda'))}</b><span>Foyda</span></div>
       </div>
-      <div class="tbl-wrap"><table class="tbl wide"><thead><tr><th>Mijoz F.I.O.</th><th>Xarid</th><th>Holati</th><th>To'lov</th><th class="r">Mebel qanchaga tushdi</th><th class="r">Chegirma</th><th class="r">Sotilgan summa</th><th class="r">Foyda</th></tr></thead><tbody>
+      <div class="tbl-wrap"><table class="tbl wide"><thead><tr><th>Mijoz F.I.O.</th><th>Xarid</th><th>Holati</th><th>To'lov</th><th class="r">Mebel qanchaga tushdi</th><th class="r">Chegirma</th><th class="r">Sotilgan summa</th><th class="r">Foyda</th><th></th></tr></thead><tbody>
         ${rows.map((r, i) => `<tr data-i="${i}" style="cursor:pointer"><td><b>${esc(r.name)}</b><div class="hint">№${r.o.no}</div></td><td class="xarid">${esc(r.xarid)}</td><td>${esc(ctx.STAGES[r.o.stage]?.t || r.o.stage)}</td><td>${esc(r.tolov)}</td>
           <td class="r">${uzs(r.tan)}</td><td class="r">${r.cheg ? `${uzs(r.cheg)}<div class="hint">${pct(r.chegFoiz)}</div>` : '—'}</td><td class="r">${uzs(r.sotuv)}</td>
-          <td class="r" style="font-weight:700;color:${r.foyda < 0 ? 'var(--bad)' : 'var(--ok)'}">${uzs(r.foyda)}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">Bu davrda rasmiylashtirilgan buyurtma yo\'q</td></tr>'}
+          <td class="r" style="font-weight:700;color:${r.foyda < 0 ? 'var(--bad)' : 'var(--ok)'}">${uzs(r.foyda)}</td>
+          <td><button class="btn sec sm" data-hide="${r.o.id}" title="Hisobotdan o'chirish">🗑</button></td></tr>`).join('') || '<tr><td colspan="9" class="empty">Bu davrda rasmiylashtirilgan buyurtma yo\'q</td></tr>'}
         ${rows.length ? `<tr style="background:var(--surface2);font-weight:700"><td colspan="4">JAMI</td><td class="r">${uzs(sum('tan'))}</td><td class="r">${uzs(sum('cheg'))}</td><td class="r">${uzs(sum('sotuv'))}</td>
-          <td class="r" style="color:${sum('foyda') < 0 ? 'var(--bad)' : 'var(--ok)'}">${uzs(sum('foyda'))}<div class="hint" style="font-weight:500">savdo: ${uzs(sum('savdo'))}<br>muddatli ustama: ${uzs(sum('ustamaF'))}</div></td></tr>` : ''}
+          <td class="r" style="color:${sum('foyda') < 0 ? 'var(--bad)' : 'var(--ok)'}">${uzs(sum('foyda'))}<div class="hint" style="font-weight:500">savdo: ${uzs(sum('savdo'))}<br>muddatli ustama: ${uzs(sum('ustamaF'))}</div></td><td></td></tr>` : ''}
       </tbody></table></div>
+      ${hrows.length ? `<details class="grp" style="margin-top:14px"><summary>🗑 O'chirilganlar — ${hrows.length} ta <span class="hint">(hisobotga va jami summalarga kirmaydi)</span></summary><div style="padding:0 10px 10px"><div class="tbl-wrap"><table class="tbl wide"><thead><tr><th>Mijoz F.I.O.</th><th>Xarid</th><th class="r">Sotilgan summa</th><th class="r">Foyda</th><th>Kim o'chirdi</th><th></th></tr></thead><tbody>
+        ${hrows.map(r => `<tr><td><b>${esc(r.name)}</b><div class="hint">№${r.o.no}</div></td><td class="xarid">${esc(r.xarid)}</td><td class="r">${uzs(r.sotuv)}</td><td class="r">${uzs(r.foyda)}</td>
+          <td>${esc(r.o.reportHidden.n || '')}<div class="hint">${fdt(r.o.reportHidden.t)}</div></td><td><button class="btn sec sm" data-unhide="${r.o.id}">↺ Tiklash</button></td></tr>`).join('')}
+      </tbody></table></div></div></details>` : ''}
       <p class="hint">Rasmiylashtirilgan buyurtmalar (bekor qilinganlardan tashqari), rasmiylashtirilgan sana bo'yicha. Tannarx = xom ashyo + haqiqatda biriktirilgan ustaning haqi. Muddatli to'lovda sotilgan summa — oylik ustama bilan jami summa.</p>`;
     const p = page.querySelector('#rpP'); p.onchange = () => { F.period = p.value; draw(); };
     const fr = page.querySelector('#rpFrom'), to = page.querySelector('#rpTo');
     if (fr) fr.onchange = () => { F.from = fr.value; draw(); };
     if (to) to.onchange = () => { F.to = to.value; draw(); };
-    const br = page.querySelector('#rpB'); if (br) br.onchange = () => { F.branch = br.value; draw(); };
-    page.querySelector('#rpS').onchange = e => { F.seller = e.target.value; draw(); };
+    ctx.bindFilters(page, draw);
+    page.querySelectorAll('[data-hide]').forEach(b => b.onclick = async e => {
+      e.stopPropagation();
+      const o = S.orders.find(x => x.id === b.dataset.hide);
+      if (!await confirmBox(`№${o.no} ${esc(o.client?.name || '')} hisobotdan o'chirilsinmi? U "O'chirilganlar" bo'limiga tushadi, keyin qayta tiklash mumkin. Buyurtmaning o'zi o'chmaydi.`, "O'chirish", true)) return;
+      try { await updateDoc(doc(ctx.db, 'orders', o.id), { reportHidden: { by: S.me.id, n: S.me.fullName || '', t: Date.now() } }); toast("Hisobotdan o'chirildi"); draw(); } catch (er) { toast(errText(er), true); }
+    });
+    page.querySelectorAll('[data-unhide]').forEach(b => b.onclick = async () => {
+      try { await updateDoc(doc(ctx.db, 'orders', b.dataset.unhide), { reportHidden: deleteField() }); toast('Tiklandi'); draw(); } catch (er) { toast(errText(er), true); }
+    });
     page.querySelector('#rpD').onchange = e => { F.done = e.target.checked; draw(); };
     page.querySelectorAll('[data-i]').forEach(tr => tr.onclick = () => ctx.openOrder(rows[+tr.dataset.i].o.id));
     page.querySelector('#rpX').onclick = async () => {

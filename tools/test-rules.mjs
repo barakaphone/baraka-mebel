@@ -205,6 +205,38 @@ await ok('javobdan keyin mavzu yangilanadi', updateDoc(doc(as(P.sot), 'topics', 
 await no('begona xodim muammoni yopa olmaydi', updateDoc(doc(as(P.sot), 'topics', 't1'), { status: 'closed', closedBy: P.sot, closedAt: 3 }));
 await ok('admin muammoni yopadi', updateDoc(doc(as(P.admin), 'topics', 't1'), { status: 'closed', closedBy: P.admin, closedAt: 3 }));
 
+// --- Muddatni o'zgartirish, rahbar narxi, bildirishnomalar, hisobotdan o'chirish
+await seed();
+await env.withSecurityRulesDisabled(async c => {
+  const db = c.firestore();
+  await setDoc(doc(db, 'orders', 'o-ks'), { no: 9, branchId: 'b1', sellerId: P.sot, stage: 'kesish', tolovTuri: 'naqd', mebelTuri: 'yigiladigan', ustaId: P.usta, muddat: '2030-01-10', log: [] });
+  await setDoc(doc(db, 'orders', 'o-ks', 'pul', 'main'), { branchId: 'b1', result: { naqd: 1000 }, ustaId: P.usta, ustaHaqi: 50, ustaFoiz: 0.1 });
+  await setDoc(doc(db, 'orders', 'o-ug', 'pul', 'main'), { branchId: 'b1', result: { naqd: 1000, tanlangan: { qoldiq: 0, oy: 0 } }, ustaBaza: 500, ustaId: P.usta, ustaHaqi: 50, ustaFoiz: 0.1 });
+  await setDoc(doc(db, 'notifs', 'n1'), { to: P.sot, orderId: 'o-ks', orderNo: '9', client: 'M', kind: 'usta', text: 'x', by: P.usta, byName: 'U', at: 1, read: false });
+});
+const mt = { eski: '2030-01-10', yangi: '2030-01-15', sabab: 'Material', t: 1, n: 'U', u: P.usta };
+await ok('usta o\'z ishining muddatini o\'zgartiradi (sababi bilan)', updateDoc(doc(as(P.usta), 'orders', 'o-ks'), { muddat: '2030-01-15', muddatTarix: [mt] }));
+await no('usta tarixsiz muddatni o\'zgartira olmaydi', updateDoc(doc(as(P.usta), 'orders', 'o-ks'), { muddat: '2030-02-01' }));
+await no('boshqa usta muddatni o\'zgartira olmaydi', updateDoc(doc(as(P.usta2), 'orders', 'o-ks'), { muddat: '2030-02-01', muddatTarix: [mt, mt] }));
+await no('sotuvchi muddatni o\'zgartira olmaydi', updateDoc(doc(as(P.sot), 'orders', 'o-ks'), { muddat: '2030-02-01', muddatTarix: [mt, mt] }));
+await ok('rahbar muddatni o\'zgartiradi', updateDoc(doc(as(P.rahbar), 'orders', 'o-ks'), { muddat: '2030-02-01', muddatTarix: [mt, { ...mt, u: P.rahbar }] }));
+await ok('rahbar usta bosqichida narxni o\'zgartiradi', updateDoc(doc(as(P.rahbar), 'orders', 'o-ug', 'pul', 'main'), { result: { naqd: 1200, tanlangan: { qoldiq: 0, oy: 0 } }, ustaHaqi: 60 }));
+await ok('rahbar buyurtma hisobini yangilaydi', updateDoc(doc(as(P.rahbar), 'orders', 'o-ug'), { hasCalc: true, ish: { lines: [] } }));
+await no('rahbar ustani narx bilan birga almashtira olmaydi', updateDoc(doc(as(P.rahbar), 'orders', 'o-ug', 'pul', 'main'), { result: { naqd: 1 }, ustaId: P.usta2 }));
+await no('sotuvchi usta bosqichida narxni o\'zgartira olmaydi', updateDoc(doc(as(P.sot), 'orders', 'o-ug', 'pul', 'main'), { result: { naqd: 1 } }));
+await ok('usta sotuvchiga bildirishnoma yuboradi', setDoc(doc(as(P.usta), 'notifs', 'n2'), { to: P.sot, orderId: 'o-ks', orderNo: '9', client: 'M', kind: 'usta', text: 'qabul qildi', by: P.usta, byName: 'U', at: 2, read: false }));
+await no('boshqa nomidan bildirishnoma yozib bo\'lmaydi', setDoc(doc(as(P.usta), 'notifs', 'n3'), { to: P.sot, orderId: 'o-ks', orderNo: '9', client: 'M', kind: 'usta', text: 'x', by: P.rahbar, byName: 'U', at: 2, read: false }));
+await ok('sotuvchi o\'z bildirishnomalarini o\'qiydi', getDocs(query(collection(as(P.sot), 'notifs'), where('to', '==', P.sot))));
+await no('boshqaning bildirishnomasini o\'qib bo\'lmaydi', getDoc(doc(as(P.sot2), 'notifs', 'n1')));
+await ok('sotuvchi "o\'qildi" belgilaydi', updateDoc(doc(as(P.sot), 'notifs', 'n1'), { read: true }));
+await no('bildirishnoma matnini o\'zgartirib bo\'lmaydi', updateDoc(doc(as(P.sot), 'notifs', 'n1'), { text: 'y' }));
+await ok('admin hisobotdan o\'chiradi', updateDoc(doc(as(P.admin), 'orders', 'o-ks'), { reportHidden: { by: P.admin, n: 'A', t: 1 } }));
+await no('sotuvchi hisobotdan o\'chira olmaydi', updateDoc(doc(as(P.sot), 'orders', 'o-new'), { reportHidden: { by: P.sot, n: 'S', t: 1 } }));
+await ok('sotuvchi shartnomadan keyin o\'lchovchini biriktiradi', (async () => {
+  await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'orders', 'o-ol2'), { no: 10, branchId: 'b1', sellerId: P.sot, stage: 'olchov', tolovTuri: 'muddatli', mebelTuri: 'yigiladigan', olchovchiId: '', log: [] }));
+  return updateDoc(doc(as(P.sot), 'orders', 'o-ol2'), { olchovchiId: P.olch, olchovchiName: 'K' });
+})());
+
 // --- Admin
 await seed();
 const ad = as(P.admin);

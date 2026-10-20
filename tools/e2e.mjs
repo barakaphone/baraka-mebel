@@ -75,6 +75,7 @@ for (const [n, ph, r] of staff) {
   await page.fill('#sf [name=fullName]', n); await page.fill('#sf [name=phone]', ph); await page.fill('#sf [name=pw]', 'Parol1234');
   await page.selectOption('#sf [name=role]', r);
   if (r === 'usta') await page.fill('#sf [name=ustaFoiz]', '10');
+  if (r === 'usta' || r === 'olchovchi') { await page.fill('#sf [name=viloyat]', "Farg'ona viloyati"); await page.fill('#sf [name=tuman]', "Qo'qon sh."); }
   await page.click('#sf button.pri');
   try { await page.waitForSelector('#sf', { state: 'detached', timeout: 20000 }); } catch (e) { console.log('FORM XATO:', r, await page.textContent('#sfErr')); await shot(page, 'form-xato'); throw e; }
 }
@@ -110,7 +111,6 @@ await page.waitForSelector('#fmSkip:visible');
 await page.setInputFiles('#ppUp [data-up="orqa"]', IMG);
 await page.waitForSelector('#ppUp [data-side="orqa"][data-has="1"]', { timeout: 20000 });
 await page.waitForSelector('#fmBtn:visible');
-await page.selectOption('#olSel', { label: "O'lchovchi Karim" });
 await shot(page, 'rasmiylashtirish');
 await page.click('#fmBtn');
 await page.waitForSelector('.badge:has-text("Shartnomachida")', { timeout: 20000 }); await saved(page);
@@ -127,6 +127,17 @@ await page.waitForSelector('#ph-pasport img', { timeout: 20000 });
 await shot(page, 'shartnomachi');
 await page.click('[data-a="sk-ok"]');
 await page.waitForSelector(".badge:has-text(\"O'lchovda\")", { timeout: 20000 }); await saved(page);
+await page.context().close();
+
+// 5b. Sotuvchi: shartnomachi ruxsatidan keyin o'lchovchini biriktiradi (hududi bilan)
+page = await newPage();
+await login(page, '902222222', 'Parol1234');
+await openFirst(page);
+await page.waitForSelector('[data-a="olAssign"]');
+const olLabel = await page.locator('#olSel option >> nth=1').textContent();
+console.log("O'lchovchi ro'yxatda:", olLabel.trim());
+await page.selectOption('#olSel', { index: 1 });
+await page.click('[data-a="olAssign"]'); await saved(page);
 await page.context().close();
 
 // 6. O'lchovchi
@@ -149,10 +160,13 @@ await page.waitForSelector(".badge:has-text(\"O'lchandi\")", { timeout: 20000 })
 console.log("O'lchovchi narxni ko'radimi:", !!seesPrice);
 await page.context().close();
 
-// 7. Sotuvchi: narx o'zgardi → sabab → ustaga yuborish (limit ichida bo'lsa)
+// 7. Sotuvchi: 🔔 "o'lchandi" xabari; narx o'zgardi → sabab → ustaga yuborish (limit ichida bo'lsa)
 page = await newPage();
 await login(page, '902222222', 'Parol1234');
-await openFirst(page);
+await page.waitForSelector('#bellCnt:not(.hidden)', { timeout: 15000 });
+console.log('Sotuvchi bildirishnomalari:', await page.textContent('#bellCnt'));
+await page.click('#bellBtn'); await page.waitForSelector('.nitem'); await shot(page, 'bildirishnoma');
+await page.click('.nitem'); await page.waitForSelector('#back');
 await page.click('[data-a="calc"]');
 await page.waitForSelector('[data-k="Spalniy!C8"]');
 await page.fill('[data-k="Spalniy!C8"]', '250');
@@ -177,6 +191,17 @@ await page.context().close();
 page = await newPage();
 await login(page, '905555555', 'Parol1234');
 await openFirst(page);
+// Rahbar mebel narxini o'zgartiradi (sababi bilan)
+await page.click('[data-a="calc"]');
+await page.waitForSelector('[data-k="Spalniy!C8"]');
+await page.fill('[data-k="Spalniy!C8"]', '255');
+await page.waitForTimeout(800);
+await page.click('#saveCalc');
+await page.waitForSelector('#rz');
+await page.fill('#rz', 'Mijoz qo\'shimcha tortma so\'radi');
+await page.click('#rzb');
+await page.waitForSelector('#ustaSel', { timeout: 20000 });
+console.log('Rahbar narxni o\'zgartirdi, bosqich:', await page.textContent('.badge >> nth=0'));
 await page.selectOption('#ustaSel', { index: 1 });
 await page.waitForTimeout(300);
 await shot(page, 'rahbar');
@@ -193,6 +218,13 @@ await page.fill('#muddatIn', '2030-12-31');
 await page.locator('[data-a="u-ok"]').click();
 await page.click('.modal [data-ok]');
 await saved(page);
+// Muddatni o'zgartirish (sababi bilan)
+await page.waitForSelector('[data-a="muddat"]');
+await page.click('[data-a="muddat"]');
+await page.fill('#nm', '2031-01-15'); await page.fill('#nmz', 'Material kechikdi');
+await page.click('#nmb'); await saved(page);
+await page.waitForTimeout(1500);
+await shot(page, 'usta-muddat');
 for (let i = 0; i < 3; i++) { await page.waitForTimeout(3000); await page.locator('[data-a="u-next"]').click(); await saved(page); }
 await page.waitForSelector('#yetkUp input[type=file]', { state: 'attached', timeout: 20000 });
 await page.click('[data-a="delivered"]');
@@ -223,6 +255,11 @@ await page.click('[data-tab="report"]');
 await page.waitForSelector('#rpP');
 await shot(page, 'hisobot');
 console.log('Hisobot foyda:', (await page.textContent('.stats .stat:nth-child(4) b')).trim());
+await page.click('[data-hide]'); await page.click('.modal [data-ok]'); await saved(page);
+await page.waitForSelector('[data-unhide]', { state: 'attached' });
+console.log("Hisobotdan o'chirildi, foyda endi:", (await page.textContent('.stats .stat:nth-child(4) b')).trim());
+await page.click('details.grp summary'); await shot(page, 'hisobot-ochirilgan');
+await page.click('[data-unhide]'); await saved(page);
 await page.click('#cwFab');
 await page.click('#cwNew');
 await page.fill('#cwForm [name=text]', 'Sinov muammo\nTekshiruv');
