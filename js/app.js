@@ -132,8 +132,18 @@ const stageByEntry = nom => ({ n: (S.me.fullName || '') + (nom ? ` (${nom} nomid
 // Rahbarlarga (admin va "ustaga biriktirish" ruxsati borlar) bildirishnoma
 const notifyRahbar = (b, o, kind, text) => S.staff
   .filter(p => p.active && !p.deleted && !p.replacedBy && p.id !== S.me.id && (p.role === 'admin' || S.roles[p.role]?.perms?.assign_usta))
-  .forEach(p => addNotif(ctx, b, o, kind, text, p.id));
-const notify = (b, o, kind, text) => addNotif(ctx, b, o, kind, text);
+  .forEach(p => addNotif(ctx, NQB, o, kind, text, p.id));
+const notify = (b, o, kind, text) => addNotif(ctx, NQB, o, kind, text);
+// Bildirishnomalar asosiy o'zgarish bilan bitta paketda emas, undan keyin alohida yuboriladi:
+// ular rad etilsa ham buyurtma bosqichi o'zgaraveradi
+const NQ = [];
+const NQB = { set: (ref, data) => NQ.push([ref, data]) };
+async function flushNotifs() {
+  if (!NQ.length) return;
+  const b = writeBatch(db);
+  NQ.splice(0).forEach(([ref, data]) => b.set(ref, data));
+  try { await b.commit(); } catch (e) { console.warn('bildirishnoma', e); setTimeout(() => toast('Saqlandi, lekin 🔔 bildirishnoma yuborilmadi: ' + errText(e), true), 2500); }
+}
 const minRasm = () => Math.max(1, Number(S.settings.main.minRasm) || 4);
 const logEntry = m => ({ t: Date.now(), u: S.me.id, n: S.me.fullName || '', m });
 const show = id => ['boot', 'setup', 'login', 'app'].forEach(x => $('#' + x).classList.toggle('hidden', x !== id));
@@ -963,9 +973,11 @@ function bindOrder(page, o, pul) {
       f['stageBy.' + o.stage] = stageByEntry(nom);
     }
     b.update(doc(db, 'orders', o.id), f);
+    NQ.length = 0;
     if (extra) extra(b);
     await b.commit();
     toast(msg);
+    flushNotifs();
   };
   $('#editClient') && ($('#editClient').onclick = () => {
     const m = modal(`<h2>Murojaatni tahrirlash</h2><form id="ef">${clientFormHtml(o)}<div class="err hidden" id="efErr"></div><button class="btn pri block">Saqlash</button></form>`);
@@ -1087,7 +1099,7 @@ function bindOrder(page, o, pul) {
   on('reOlchov', async () => {
     if (!await confirmBox("Buyurtma qayta o'lchovga yuborilsinmi? O'lchovchi yana o'lchaydi.", 'Yuborish')) return;
     await upd({ stage: 'olchov', ustaEtiroz: null }, "Qayta o'lchovga yuborildi (usta e'tirozi bo'yicha)",
-      b => addNotif(ctx, b, o, 'olchov', "📏 Qayta o'lchash kerak (usta e'tirozi)", o.olchovchiId));
+      b => addNotif(ctx, NQB, o, 'olchov', "📏 Qayta o'lchash kerak (usta e'tirozi)", o.olchovchiId));
   });
   let mtN = 0, kN = 0, shN = 0, mdN = 0;
   if ($('#mtUp')) mediaUploader($('#mtUp'), o, 'tasdiq', n => { mtN = n; });
@@ -1108,7 +1120,7 @@ function bindOrder(page, o, pul) {
       b => {
         b.set(doc(db, 'orders', o.id, 'pul', 'main'), { kirim: { summa, hujjat, izoh, t: Date.now(), n: S.me.fullName || '' } }, { merge: true });
         notify(b, o, 'kirim', muddatli(o) ? '📦 Mahsulot kirim qilindi — shartnoma tuzing' : '📦 Mahsulot kirim qilindi — usta ishni qabul qilishi kutilmoqda');
-        if (!muddatli(o)) addNotif(ctx, b, o, 'ish', '🔨 Yangi ish: qabul qilib, yakunlash sanasini belgilang', o.ustaId);
+        if (!muddatli(o)) addNotif(ctx, NQB, o, 'ish', '🔨 Yangi ish: qabul qilib, yakunlash sanasini belgilang', o.ustaId);
       });
   });
   on('sh-ok', async () => {
@@ -1117,12 +1129,12 @@ function bindOrder(page, o, pul) {
     if (!sana) throw new Error('Shartnoma sanasini tanlang');
     if (!shN) throw new Error('Imzolangan shartnoma rasmini yuklang');
     await upd({ stage: 'usta_tasdiq', shartnoma: { raqam, sana, rasm: shN, t: Date.now(), n: S.me.fullName || '' } }, `Shartnoma tuzildi: №${raqam}, ${dmy(sana)}`,
-      b => addNotif(ctx, b, o, 'ish', '🔨 Yangi ish: qabul qilib, yakunlash sanasini belgilang', o.ustaId));
+      b => addNotif(ctx, NQB, o, 'ish', '🔨 Yangi ish: qabul qilib, yakunlash sanasini belgilang', o.ustaId));
   });
   on('md-ok', async () => {
     if (!mdN) throw new Error("Mijoz tasdig'ini biriktiring: audio yoki foto (kamida bittasi)");
     await upd({ muddatTasdiq: { ...o.muddatTasdiq, holat: 'rozi', by: S.me.fullName || '', at: Date.now() } }, `Mijoz yangi muddatga (${dmy(o.muddatTasdiq.yangi)}) rozi bo'ldi`,
-      b => addNotif(ctx, b, o, 'muddat', `✓ Mijoz yangi muddatga (${dmy(o.muddatTasdiq.yangi)}) rozi`, o.ustaId));
+      b => addNotif(ctx, NQB, o, 'muddat', `✓ Mijoz yangi muddatga (${dmy(o.muddatTasdiq.yangi)}) rozi`, o.ustaId));
   });
   on('md-no', () => {
     const mt = o.muddatTasdiq;
@@ -1134,7 +1146,7 @@ function bindOrder(page, o, pul) {
         const txt = `✕ Mijoz yangi muddatga rozi emas. Eski sana qaytdi: ${dmy(mt.eski)}. Sabab: ${z}`;
         await upd({ muddat: mt.eski, muddatTarix: arrayUnion({ eski: mt.yangi, yangi: mt.eski, sabab: 'Mijoz rozi emas: ' + z, t: Date.now(), n: S.me.fullName || '', u: S.me.id }),
           muddatTasdiq: { ...mt, holat: 'rad', rad: z, by: S.me.fullName || '', at: Date.now() } }, txt,
-        b => { notifyRahbar(b, o, 'muddat', txt); addNotif(ctx, b, o, 'muddat', txt, o.ustaId); });
+        b => { notifyRahbar(b, o, 'muddat', txt); addNotif(ctx, NQB, o, 'muddat', txt, o.ustaId); });
         m.close();
       } catch (e) { toast(errText(e), true); }
     };
@@ -1324,6 +1336,7 @@ function openCalcForOrder(o, pul, opts = {}) {
       b.update(doc(db, 'orders', o.id), of);
       if (needReason && o.sellerId && o.sellerId !== S.me.id) notify(b, o, 'narx', `💰 Narx o'zgardi: ${uzs(old)} → ${uzs(r.naqd)}. Sabab: ${izoh}`);
       await b.commit();
+      flushNotifs();
       toast('Saqlandi');
       S.view = { type: 'order', id: o.id };
       openOrder(o.id);
