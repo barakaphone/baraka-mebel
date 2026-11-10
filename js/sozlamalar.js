@@ -8,11 +8,11 @@ const K = window.KALK;
 
 const TABS_ADMIN = [
   { id: 'umumiy', t: 'Umumiy' }, { id: 'narx', t: 'Kurs va ustama' }, { id: 'laminat', t: 'Xom ashyo: laminat' },
-  { id: 'krasheniy', t: 'Xom ashyo: krasheniy' }, { id: 'matras', t: 'Matras' }, { id: 'oshxona', t: 'Oshxona narxlari' },
+  { id: 'krasheniy', t: 'Xom ashyo: krasheniy' }, { id: 'matras', t: 'Matras' }, { id: 'qosh', t: "Qo'shimcha mahsulotlar" }, { id: 'oshxona', t: 'Oshxona narxlari' },
   { id: 'tarif', t: "Muddatli to'lov" }, { id: 'texnik', t: 'Texnik parametrlar' }, { id: 'rollar', t: 'Rollar va ruxsatlar' },
 ];
 const TABS_XOM = [
-  { id: 'laminat', t: 'Laminat' }, { id: 'krasheniy', t: 'Krasheniy' }, { id: 'matras', t: 'Matras' }, { id: 'oshxona', t: 'Oshxona' },
+  { id: 'laminat', t: 'Laminat' }, { id: 'krasheniy', t: 'Krasheniy' }, { id: 'matras', t: 'Matras' }, { id: 'qosh', t: "Qo'shimcha mahsulotlar" }, { id: 'oshxona', t: 'Oshxona' },
 ];
 const GROUPS = ['Asosiy', 'Furnitura', 'Xizmat', 'Qadoqlash', 'Bo\'yoq', 'Boshqa'];
 const UNITS = ['dona', 'm', 'm²', 'list', 'kg', 'litr', 'juft', 'komplekt', 'tuba', 'rulon'];
@@ -39,6 +39,13 @@ export function renderSettings(page, ctx) {
   };
   const sel = (key, opts) => `<select class="inp sm" data-key="${esc(key)}" data-t="text">${opts.map(o => `<option ${String(o) === String(cur(key)) ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
 
+  const ex = S.settings.extra || {};
+  const exInp = (k, def, t = 'money') => `<input class="inp sm" data-ex="${k}" data-t="${t}" ${t === 'money' ? 'data-money inputmode="numeric"' : 'inputmode="decimal"'} value="${esc(t === 'money' ? moneyFmt(String(ex[k] ?? def)) : String(ex[k] ?? def))}">`;
+  // Ro'yxat (stoleshnitsa, qo'shimcha mahsulot): nomi va narxi
+  const listTbl = (key, list, unit) => `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Nomi</th><th class="r">Narxi (${unit})</th><th></th></tr></thead><tbody>
+    ${list.filter(x => !x.deleted).map(x => `<tr><td><b>${esc(x.nomi)}</b></td><td class="r">${esc(unit === '$' ? x.narx : moneyFmt(String(x.narx)))}</td>
+      <td style="white-space:nowrap"><button class="btn sec sm" data-led="${key}" data-id="${esc(x.id)}" title="Tahrirlash">✏️</button> <button class="btn sec sm" data-ldel="${key}" data-id="${esc(x.id)}" title="O'chirish">🗑</button></td></tr>`).join('') || '<tr><td colspan="3" class="empty">Hozircha yo\'q</td></tr>'}
+    </tbody></table></div><button class="btn sec sm" data-ladd="${key}" style="margin-top:8px">+ Qo'shish</button>`;
   let body = '';
   const rows = K.sozlamalarRows();
   const rowTable = list => `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Guruh</th><th>Parametr</th><th>Qiymat</th><th>Birlik</th><th>Izoh</th></tr></thead><tbody>
@@ -56,14 +63,20 @@ export function renderSettings(page, ctx) {
         <div class="card"><h3>Murojaat statuslari</h3><p class="hint" style="margin-top:-6px">Yangi murojaat doim "Yangi murojaat" statusi bilan tushadi.</p>${listEd('statuslar', m.statuslar, true)}</div></div>
         <div class="row2" style="align-items:flex-start">
           <div class="card"><h3>Rasmlar</h3><div class="field"><label>O'lchov va yetkazishda kamida necha rasm</label><input class="inp" id="minRasm" inputmode="numeric" value="${esc(m.minRasm || 4)}"></div></div>
-          <div class="card"><h3>Usta muddati</h3><div class="field"><label>Muddatdan o'tsa jarima, %</label><input class="inp" id="jarimaFoiz" inputmode="decimal" value="${esc(m.jarimaFoiz ?? 30)}"><div class="hint">Usta ishni qabul qilayotganda ogohlantirish sifatida ko'rsatiladi. 0 — ko'rsatilmaydi.</div></div></div>
+          <div class="card"><h3>Usta muddati</h3><div class="field"><label>Muddatdan o'tsa jarima, %</label><input class="inp" id="jarimaFoiz" inputmode="decimal" value="${esc(m.jarimaFoiz ?? 30)}"><div class="hint">Usta ishni qabul qilayotganda ogohlantirish sifatida ko'rsatiladi. 0 — ko'rsatilmaydi.</div></div>
+            <div class="field"><label>Mijozga chegirma: har bir kechikkan kun uchun, %</label><input class="inp" id="kechikFoiz" inputmode="decimal" value="${esc(m.kechikFoiz ?? 1)}"><div class="hint">PDF'da kafolat sifatida yoziladi va kechiksa tizim o'zi hisoblaydi. 0 — o'chiq.</div></div>
+            <div class="field"><label>Chegirmaning eng ko'pi, % (0 — chegarasiz)</label><input class="inp" id="kechikMax" inputmode="decimal" value="${esc(m.kechikMax ?? 0)}"></div></div>
         </div>
         <div class="card"><h3>Kompaniya (PDF narx taklifida)</h3>${rowTable(rows.filter(r => r.text))}</div>`;
       break;
     }
     case 'narx':
       body = `<p class="hint">Kurs o'zgarsa faqat "Joriy kurs" ni yangilang — "kursga bog'liq" narxlar o'zi qayta hisoblanadi.</p>
-        ${rowTable(rows.filter(r => /^1\./.test(r.section) && !r.text).concat(rows.filter(r => /^7\./.test(r.section))))}`;
+        ${rowTable(rows.filter(r => /^1\./.test(r.section) && !r.text).concat(rows.filter(r => /^7\./.test(r.section))))}
+        <div class="row2" style="align-items:flex-start;margin-top:12px">
+          ${admin ? `<div class="card"><h3>Standart usta foizi</h3><div class="field"><label>Usta haqi, % (xom ashyo summasiga)</label><input class="inp sm" id="ustaStd" inputmode="decimal" value="${esc(+(Number(S.settings.main.ustaStdFoiz ?? 0.1) * 100).toFixed(2))}"></div><p class="hint">Narx shu foiz bilan hisoblanadi. Ishni olgan ustaga esa o'z foizi bo'yicha haq to'lanadi.</p></div>` : ''}
+          <div class="card"><h3>Logistika</h3><div class="field"><label>Har bir bo'lim uchun (spalniy, oshxona, korpus), so'm</label>${exInp('logistika', 1000000)}</div><p class="hint">Yoqilgan har bir bo'limga narxga shu summa qo'shiladi. 0 — qo'shilmaydi.</p></div>
+        </div>`;
       break;
     case 'matras': {
       const all = Array.isArray(S.settings.matraslar) ? S.settings.matraslar : K.matraslar({ kalk: S.settings.kalk, xom: S.settings.xom });
@@ -110,12 +123,24 @@ export function renderSettings(page, ctx) {
         </tbody></table></div>`;
       break;
     }
+    case 'qosh':
+      body = `<p class="hint">Spalniy garniturga qo'shiladigan mahsulotlar (masalan, yodoviy oynek, ramkalar). Narxi — 1 dona uchun, mijozga shu holicha qo'shiladi.</p>
+        ${listTbl('qosh', ex.qosh || [], "so'm")}`;
+      saveable = false;
+      break;
     case 'oshxona':
       body = `<p class="hint">1 pogon metr narxi, dollarda. Yangi xomashyo yoki balandlik qo'shsangiz, kalkulyator ro'yxatida o'zi paydo bo'ladi.</p>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Xomashyo</th><th>Balandligi (m)</th><th>1 m narxi ($)</th><th>Izoh</th><th></th></tr></thead><tbody>
         ${K.oshxonaNarxRows().map(r => { const empty = cur(r.mat) === '' && cur(r.narx) === ''; return `<tr data-orow class="${empty ? 'hidden' : ''}"><td>${inp(r.mat, 'text')}</td><td>${inp(r.bal, 'num')}</td><td>${inp(r.narx, 'num')}</td><td>${inp(r.izoh, 'text')}</td><td><button type="button" class="btn sec sm" data-oclr title="Qatorni o'chirish">🗑</button></td></tr>`; }).join('')}
         </tbody></table></div>
-        <button type="button" class="btn sec sm" id="oshAdd" style="margin-top:8px">+ Qator qo'shish</button>`;
+        <button type="button" class="btn sec sm" id="oshAdd" style="margin-top:8px">+ Qator qo'shish</button>
+        <div class="row2" style="align-items:flex-start;margin-top:14px">
+          <div class="card"><h3>Gaz plita, xolodilnik, moyka</h3>
+            <div class="field"><label>Duxovkali gaz plita eni, m (narxdan ayiriladi)</label>${exInp('plitaEn', 0.6, 'num')}</div>
+            <div class="field"><label>Xolodilnik eni, m (narxdan ayiriladi)</label>${exInp('xolodilnikEn', 0.7, 'num')}</div>
+            <div class="field"><label>Moyka narxi, so'm (narxga qo'shiladi)</label>${exInp('moyka', 0)}</div></div>
+          <div class="card"><h3>Stoleshnitsa — 1 metr narxi, $</h3>${listTbl('stol', ex.stol || K.STOL_DEF, '$')}</div>
+        </div>`;
       break;
     case 'tarif':
       body = `<p class="hint">Oylik ustama oldindan to'lov ulushiga qarab olinadi: "dan" ustunidagi foizdan boshlab shu qator ishlaydi. Masalan, 19,5% → 0% qatori, 20% → 20% qatori.</p>
@@ -202,6 +227,33 @@ export function renderSettings(page, ctx) {
     try { await saveMat(matList().map(x => x.id === b.dataset.mrest ? { ...x, deleted: false } : x)); toast('Tiklandi'); } catch (e) { toast(errText(e), true); }
   });
 
+  // Stoleshnitsa va qo'shimcha mahsulotlar ro'yxati
+  const exList = key => ((S.settings.extra || {})[key] || (key === 'stol' ? K.STOL_DEF : [])).map(x => ({ ...x }));
+  const saveList = async (key, list) => { await setDoc(doc(ctx.db, 'settings', 'xom'), { extra: { [key]: list }, updatedAt: serverTimestamp(), by: S.me.fullName || '' }, { merge: true }); await ctx.loadStatic(); renderSettings(page, ctx); };
+  const itemForm = (key, it, onSave) => {
+    const usd = key === 'stol';
+    const m = modal(`<h2>${it ? 'Tahrirlash' : key === 'stol' ? 'Yangi stoleshnitsa' : "Yangi mahsulot"}</h2><form id="lf">
+      <div class="field"><label>Nomi *</label><input class="inp" name="nomi" required maxlength="60" value="${esc(it?.nomi || '')}"></div>
+      <div class="field"><label>${usd ? '1 metr narxi, $' : "1 dona narxi, so'm"} *</label><input class="inp" name="narx" ${usd ? 'inputmode="decimal"' : 'inputmode="numeric" data-money'} value="${esc(it ? (usd ? it.narx : moneyFmt(String(it.narx))) : '')}"></div>
+      <div class="err hidden" id="lfErr"></div><button class="btn pri block">Saqlash</button></form>`);
+    const f = m.el.querySelector('#lf');
+    f.onsubmit = async e => {
+      e.preventDefault();
+      try {
+        const narx = parseNum(f.narx.value);
+        if (!f.nomi.value.trim() || !narx) throw new Error('Nomi va narxini kiriting');
+        await onSave({ id: it?.id || key[0] + Date.now().toString(36), nomi: f.nomi.value.trim(), narx });
+        m.close(); toast('Saqlandi');
+      } catch (er) { const x = f.querySelector('#lfErr'); x.textContent = errText(er); x.classList.remove('hidden'); }
+    };
+  };
+  page.querySelectorAll('[data-ladd]').forEach(b => b.onclick = () => itemForm(b.dataset.ladd, null, it => saveList(b.dataset.ladd, [...exList(b.dataset.ladd), it])));
+  page.querySelectorAll('[data-led]').forEach(b => b.onclick = () => { const l = exList(b.dataset.led); itemForm(b.dataset.led, l.find(x => x.id === b.dataset.id), it => saveList(b.dataset.led, l.map(x => x.id === it.id ? it : x))); });
+  page.querySelectorAll('[data-ldel]').forEach(b => b.onclick = async () => {
+    if (!await confirmBox("O'chirilsinmi?", "O'chirish", true)) return;
+    try { await saveList(b.dataset.ldel, exList(b.dataset.ldel).map(x => x.id === b.dataset.id ? { ...x, deleted: true } : x)); } catch (e) { toast(errText(e), true); }
+  });
+
   if (curTab === 'rollar') bindRoles(page, ctx);
 
   const sv = page.querySelector('#saveSet');
@@ -219,12 +271,19 @@ export function renderSettings(page, ctx) {
         (K.isXomKey(key) ? xom : kalk)[key] = v;
       });
       const writes = [];
+      const exNew = {};
+      page.querySelectorAll('[data-ex]').forEach(el => { exNew[el.dataset.ex] = parseNum(el.value); });
+      if (Object.keys(exNew).length) writes.push(setDoc(doc(ctx.db, 'settings', 'xom'), { extra: exNew, updatedAt: serverTimestamp(), by: S.me.fullName || '' }, { merge: true }));
+      const us = page.querySelector('#ustaStd');
+      if (admin && us) writes.push(setDoc(doc(ctx.db, 'settings', 'main'), { ustaStdFoiz: parseNum(us.value) / 100 }, { merge: true }));
       if (Object.keys(xom).length) writes.push(setDoc(doc(ctx.db, 'settings', 'xom'), { cells: xom, updatedAt: serverTimestamp(), by: S.me.fullName || '' }, { merge: true }));
       if (admin && Object.keys(kalk).length) writes.push(setDoc(doc(ctx.db, 'settings', 'kalk'), { cells: kalk, updatedAt: serverTimestamp() }, { merge: true }));
       if (admin && curTab === 'umumiy') {
         const list = n => [...page.querySelectorAll(`[data-list="${n}"] .it input`)].map(i => i.value.trim()).filter(Boolean);
         const main = { kategoriyalar: list('kategoriyalar'), statuslar: list('statuslar'), minRasm: Math.max(1, Math.round(parseNum(page.querySelector('#minRasm').value)) || 4),
-          jarimaFoiz: Math.min(100, Math.max(0, parseNum(page.querySelector('#jarimaFoiz').value))) };
+          jarimaFoiz: Math.min(100, Math.max(0, parseNum(page.querySelector('#jarimaFoiz').value))),
+          kechikFoiz: Math.min(100, Math.max(0, parseNum(page.querySelector('#kechikFoiz').value))),
+          kechikMax: Math.min(100, Math.max(0, parseNum(page.querySelector('#kechikMax').value))) };
         if (!main.kategoriyalar.length || !main.statuslar.length) throw new Error("Ro'yxat bo'sh bo'lmasin");
         writes.push(setDoc(doc(ctx.db, 'settings', 'main'), main, { merge: true }));
       }

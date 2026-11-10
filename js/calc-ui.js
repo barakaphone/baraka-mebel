@@ -25,7 +25,8 @@ function inputHtml(key, val, f) {
 }
 const fmtPct = x => (Math.round((x || 0) * 1000) / 10).toString().replace('.', ',');
 
-// opts: {inputs, settings, ustalar:[{id,name,foiz}], showTan, canDiscount, payMode: 'naqd'|'muddatli'|undefined, onChange(result)}
+// opts: {inputs, settings, showTan, canDiscount, payMode: 'naqd'|'muddatli'|undefined, onChange(result)}
+// Usta oldindan tanlanmaydi: narx sozlamalardagi standart usta foizi bilan hisoblanadi.
 // payMode: buyurtmaning to'lov turi — naqdda muddatli to'lovga oid maydonlar umuman chiqmaydi
 export function mountCalc(root, opts) {
   const inputs = Object.assign(K.defaults(), opts.inputs || {});
@@ -34,11 +35,42 @@ export function mountCalc(root, opts) {
   const tts = opts.payMode === 'naqd' ? [naqdT] : opts.payMode === 'muddatli' ? allTt.filter(t => t !== naqdT) : allTt;
   if (!tts.includes(inputs['Buyurtma!B20'])) inputs['Buyurtma!B20'] = opts.payMode === 'muddatli' ? (tts.find(t => /6/.test(t)) || tts[0]) : tts[0];
   const naqdOnly = opts.payMode === 'naqd';
-  const ustalar = opts.ustalar || [];
+  const ex = opts.settings.extra || {};
+  const X = () => (inputs._x ||= {});
+  const furList = K.furnituraList(opts.settings);
+  const stolList = ex.stol || K.STOL_DEF;
+  const qoshList = (ex.qosh || []).filter(q => !q.deleted);
   let korCount = Math.max(1, K.KOR_COLS.filter(c => parseNum(inputs[`Korpus mebel!${c}9`]) > 0).length);
   let oshCount = Math.max(1, K.OSH_ROWS.filter(r => inputs['Oshxona!B' + r]).length);
   let result = null;
-  const settingsNow = () => ({ ...opts.settings, ustaFoiz: ustalar.find(u => u.id === inputs._usta)?.foiz || 0 });
+  const settingsNow = () => opts.settings;
+  // Bo'lim ostidagi qo'shimcha furnitura (va spalniyda qo'shimcha mahsulotlar) qatorlari
+  const furHtml = b => {
+    const rows = (X().fur ||= {})[b] ||= [];
+    return `<div class="card xtra"><h4>Qo'shimcha furnitura</h4>
+      ${rows.map((f, i) => `<div class="xrow"><select class="inp sm" data-xf="${b}" data-i="${i}" data-f="id"><option value="">— tanlang —</option>${furList.map(it => `<option value="${esc(it.id)}" ${it.id === f.id ? 'selected' : ''}>${esc(it.name)} · ${esc(moneyFmt(String(it.narx)))} so'm/${esc(it.unit)}</option>`).join('')}</select>
+        <input class="inp sm" inputmode="decimal" placeholder="soni" data-xf="${b}" data-i="${i}" data-f="q" value="${esc(f.q ?? '')}"><button type="button" class="btn sec sm" data-act="xf-" data-b="${b}" data-i="${i}">×</button></div>`).join('')}
+      <button type="button" class="btn sec sm" data-act="xf+" data-b="${b}">+ Furnitura qo'shish</button></div>`;
+  };
+  const qoshHtml = () => {
+    const rows = X().qosh ||= [];
+    if (!qoshList.length && !rows.length) return '';
+    return `<div class="card xtra"><h4>Qo'shimcha mahsulotlar</h4>
+      ${rows.map((q, i) => `<div class="xrow"><select class="inp sm" data-xq="${i}" data-f="id"><option value="">— tanlang —</option>${qoshList.map(it => `<option value="${esc(it.id)}" ${it.id === q.id ? 'selected' : ''}>${esc(it.nomi)} · ${esc(moneyFmt(String(it.narx)))} so'm</option>`).join('')}</select>
+        <input class="inp sm" inputmode="decimal" placeholder="soni" data-xq="${i}" data-f="q" value="${esc(q.q ?? '')}"><button type="button" class="btn sec sm" data-act="xq-" data-i="${i}">×</button></div>`).join('')}
+      <button type="button" class="btn sec sm" data-act="xq+">+ Mahsulot qo'shish</button></div>`;
+  };
+  // Oshxona: gaz plita, xolodilnik, moyka, stoleshnitsa
+  const oshXHtml = () => {
+    const x = X();
+    return `<div class="card xtra"><div class="pay-grid">
+      <div class="field"><label><span class="lt">Gaz plita</span><span class="ls">duxovkali — eni narxdan ayiriladi</span></label><select class="inp sm" data-xo="plita">${[['yoq', "Yo'q"], ['duxovkali', 'Duxovkali (polga)'], ['nastolniy', 'Nastolniy']].map(([v, l]) => `<option value="${v}" ${(x.plita || 'yoq') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="field"><label><span class="lt">Xolodilnik joyi</span><span class="ls">bor bo'lsa — eni ayiriladi</span></label><select class="inp sm" data-xo="xolodilnik"><option value="">Yo'q</option><option value="1" ${x.xolodilnik ? 'selected' : ''}>Bor</option></select></div>
+      <div class="field"><label><span class="lt">Moyka</span><span class="ls">${esc(moneyFmt(String(ex.moyka || 0)))} so'm</span></label><select class="inp sm" data-xo="moyka"><option value="">Yo'q</option><option value="1" ${x.moyka ? 'selected' : ''}>Bor</option></select></div>
+      <div class="field"><label><span class="lt">Stoleshnitsa</span><span class="ls">1 m narxi, $</span></label><select class="inp sm" data-xo="stol"><option value="">Yo'q</option>${stolList.filter(t => !t.deleted).map(t => `<option value="${esc(t.id)}" ${x.stol === t.id ? 'selected' : ''}>${esc(t.nomi)} — ${esc(t.narx)} $</option>`).join('')}</select></div>
+      ${x.stol ? `<div class="field"><label><span class="lt">Stoleshnitsa uzunligi, m</span></label><input class="inp sm" inputmode="decimal" data-xo="stolUz" value="${esc(x.stolUz ?? '')}"></div>` : ''}
+    </div></div>`;
+  };
 
   // Matraslar ro'yxati sozlamalardan (tanlangani o'chirilgan bo'lsa ham ko'rinib turadi)
   const matrasOpts = () => { const o = K.matrasOpts(opts.settings); return o.includes(inputs['Spalniy!C20']) || !inputs['Spalniy!C20'] ? o : [...o, inputs['Spalniy!C20']]; };
@@ -77,14 +109,11 @@ export function mountCalc(root, opts) {
       </div></details>`).join('') + (korCount < 6 ? `<button type="button" class="btn sec sm" data-act="kor+">+ Buyum qo'shish</button>` : '');
 
     const tt = tts;
-    const needUsta = on('spalniy') || on('korpus');
     root.innerHTML = `
       <div class="sec-toggle">${SECTIONS.map(s => `<label class="${on(s.id) ? 'on' : ''}"><input type="checkbox" data-sec="${s.key}" ${on(s.id) ? 'checked' : ''}> ${esc(s.name)}</label>`).join('')}</div>
-      ${needUsta ? `<div class="card"><div class="field" style="margin:0"><label><span class="lt">Usta *</span><span class="ls">narx shu ustaning xizmat narxi bilan hisoblanadi</span></label>
-        <select class="inp" data-k="_usta"><option value="">— ustani tanlang —</option>${ustalar.map(u => `<option value="${esc(u.id)}" ${u.id === inputs._usta ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></div></div>` : ''}
-      ${on('spalniy') ? `<h3>Spalniy garnitur</h3><p class="hint" style="margin-top:-6px">Kerak bo'lmagan mahsulot sonini 0 qiling. O'lchamlar sm da.</p>${spHtml}` : ''}
-      ${on('oshxona') ? `<h3>Oshxona mebeli (pogon metr)</h3>${oshHtml}` : ''}
-      ${on('korpus') ? `<h3>Korpus mebel</h3><p class="hint" style="margin-top:-6px">O'lchamlar sm da. Bo'limlar va eshiklar sonini bo'sh qoldirsangiz, avtomatik hisoblanadi.</p>${korHtml}` : ''}
+      ${on('spalniy') ? `<h3>Spalniy garnitur</h3><p class="hint" style="margin-top:-6px">Kerak bo'lmagan mahsulot sonini 0 qiling. O'lchamlar sm da.</p>${spHtml}${qoshHtml()}${furHtml('spalniy')}` : ''}
+      ${on('oshxona') ? `<h3>Oshxona mebeli (pogon metr)</h3>${oshHtml}${oshXHtml()}${furHtml('oshxona')}` : ''}
+      ${on('korpus') ? `<h3>Korpus mebel</h3><p class="hint" style="margin-top:-6px">O'lchamlar sm da. Bo'limlar va eshiklar sonini bo'sh qoldirsangiz, avtomatik hisoblanadi.</p>${korHtml}${furHtml('korpus')}` : ''}
       <h3>${naqdOnly ? 'Naqd savdo' : "To'lov sharti"}</h3>
       <div class="card"><div class="pay-grid">
         ${naqdOnly ? '' : `<div class="field"><label><span class="lt">To'lov turi</span></label><select class="inp sm" data-k="Buyurtma!B20">${tt.map(t => `<option ${t === inputs['Buyurtma!B20'] ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></div>`}
@@ -118,7 +147,7 @@ export function mountCalc(root, opts) {
     root.querySelector('#calcRes').innerHTML = `
       ${warns.length ? `<ul class="warn-list">${warns.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
       ${r.lines.length ? `<h3>Buyurtma tarkibi</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mahsulot</th><th>Tavsif</th><th>Miqdori</th><th class="r">Birlik narxi</th><th class="r">Summa</th></tr></thead><tbody>
-        ${r.lines.map(l => `<tr><td><b>${esc(l.mahsulot)}</b></td><td>${esc(l.tavsif)}</td><td>${esc(l.miqdor)}</td><td class="r">${uzs(l.birlik)}</td><td class="r">${uzs(l.summa)}</td></tr>`).join('')}
+        ${r.lines.map(l => `<tr><td><b>${esc(l.mahsulot)}</b></td><td>${esc(l.tavsif)}</td><td>${esc(l.miqdor)}</td><td class="r">${l.info ? '' : uzs(l.birlik)}</td><td class="r">${l.info ? '—' : uzs(l.summa)}</td></tr>`).join('')}
       </tbody></table></div>` : ''}
       ${opts.showTan ? `<div class="note">Tan narx: <b>${uzs(r.tan)}</b> · Baraka ustamasi: <b>${uzs(r.ustama)}</b> · Xom ashyo: ${uzs(r.xomAshyo)}</div>` : ''}
       <div class="total"><div><div class="s">Naqd narx${r.chegirma ? ` (chegirma ${uzs(r.chegirma)})` : ''}</div><div class="big-num">${uzs(r.naqd)}</div></div>
@@ -135,6 +164,9 @@ export function mountCalc(root, opts) {
 
   root.addEventListener('input', e => {
     const t = e.target;
+    if (t.dataset.xf && t.dataset.f === 'q') { X().fur[t.dataset.xf][+t.dataset.i].q = t.value; schedule(); return; }
+    if (t.dataset.xq !== undefined && t.dataset.f === 'q') { X().qosh[+t.dataset.xq].q = t.value; schedule(); return; }
+    if (t.dataset.xo === 'stolUz') { X().stolUz = t.value; schedule(); return; }
     if (t.dataset.k) { inputs[t.dataset.k] = t.value; if (t.tagName !== 'SELECT') schedule(); return; }
     switch (t.dataset.link) {
       case 'chegPct': inputs['Buyurtma!B16'] = clampPct(t); inputs._chegMode = 'pct'; break;
@@ -147,6 +179,9 @@ export function mountCalc(root, opts) {
   });
   root.addEventListener('change', e => {
     const t = e.target;
+    if (t.dataset.xf && t.dataset.f === 'id') { X().fur[t.dataset.xf][+t.dataset.i].id = t.value; recalc(); return; }
+    if (t.dataset.xq !== undefined && t.dataset.f === 'id') { X().qosh[+t.dataset.xq].id = t.value; recalc(); return; }
+    if (t.dataset.xo && t.dataset.xo !== 'stolUz') { const v = t.value; X()[t.dataset.xo] = t.dataset.xo === 'plita' || t.dataset.xo === 'stol' ? v : !!v; if (t.dataset.xo === 'stol') render(); else recalc(); return; }
     if (t.dataset.sec) { inputs[t.dataset.sec] = t.checked ? 'Ha' : "Yo'q"; render(); return; }
     if (t.dataset.k && t.tagName === 'SELECT') {
       inputs[t.dataset.k] = t.value;
@@ -157,6 +192,10 @@ export function mountCalc(root, opts) {
   root.addEventListener('click', e => {
     const a = e.target.closest('[data-act]');
     if (!a) return;
+    if (a.dataset.act === 'xf+') { X().fur[a.dataset.b].push({ id: '', q: 1 }); render(); return; }
+    if (a.dataset.act === 'xf-') { X().fur[a.dataset.b].splice(+a.dataset.i, 1); render(); return; }
+    if (a.dataset.act === 'xq+') { X().qosh.push({ id: '', q: 1 }); render(); return; }
+    if (a.dataset.act === 'xq-') { X().qosh.splice(+a.dataset.i, 1); render(); return; }
     if (a.dataset.act === 'kor+') { inputs[`Korpus mebel!${K.KOR_COLS[korCount]}9`] = 1; korCount++; render(); }
     if (a.dataset.act === 'osh+') { oshCount++; render(); }
     if (a.dataset.act === 'osh-') {
@@ -175,7 +214,8 @@ export function mountCalc(root, opts) {
       const out = {};
       const onS = s => inputs[s] === 'Ha';
       for (const [k, v] of Object.entries(inputs)) {
-        if (k.startsWith('_') || k.startsWith('Buyurtma!')) out[k] = v;
+        if (k === '_x') out[k] = JSON.parse(JSON.stringify(v || {}));
+        else if (k.startsWith('_') || k.startsWith('Buyurtma!')) out[k] = v;
         else if (k.startsWith('Spalniy!') && onS('Buyurtma!B11')) out[k] = v;
         else if (k.startsWith('Oshxona!') && onS('Buyurtma!B12')) out[k] = v;
         else if (k.startsWith('Korpus mebel!') && onS('Buyurtma!B13')) out[k] = v;
@@ -183,6 +223,7 @@ export function mountCalc(root, opts) {
       return out;
     },
     getResult() { clearTimeout(timer); recalc(); return result; },
-    ustaId: () => inputs._usta,
+    // Qo'shimchalar faqat yoqilgan bo'limlar uchun hisoblanadi (yoqilmaganlari kalkulyatorda e'tiborsiz)
+    ustaId: () => '',
   };
 }

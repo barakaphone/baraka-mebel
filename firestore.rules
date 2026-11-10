@@ -74,7 +74,7 @@ service cloud.firestore {
         || (hp(p, pm, own, 'assign_usta') && (rahbarUpd(o, n, ch) || muddatUpd(o, n, ch)
                                               || (hp(p, pm, own, 'calc') && rahbarNarx(o, n, ch))))
         || (hp(p, pm, own, 'kirim') && kirimUpd(o, n, ch))
-        || (hp(p, pm, own, 'work') && o.ustaId == uid() && (ustaUpd(o, n, ch) || muddatUpd(o, n, ch)))
+        || (hp(p, pm, own, 'work') && ((o.ustaId == uid() && (ustaUpd(o, n, ch) || muddatUpd(o, n, ch))) || ustaOl(o, n, ch)))
         || (hp(p, pm, own, 'report') && ch.hasOnly(['reportHidden']));
     }
     function workerOnly(ch, keys) { return ch.hasOnly(keys.concat(['stage', 'updatedAt', 'log', 'stageAt', 'stageBy'])); }
@@ -126,7 +126,8 @@ service cloud.firestore {
       return (o.stage in ['ustaga', 'usta_narx', 'usta_tasdiq'] && n.stage in ['usta_narx', 'usta_tasdiq']
               && workerOnly(ch, ['ustaId', 'ustaName', 'ustaEtiroz'])
               && workRole(get(/databases/$(database)/documents/profiles/$(n.ustaId)).data))
-        || (move(o, n, 'usta_narx', 'olchov') && workerOnly(ch, ['ustaEtiroz']));
+        || (move(o, n, 'usta_narx', 'olchov') && workerOnly(ch, ['ustaEtiroz']))
+        || (move(o, n, 'usta_narx', 'ustaga') && n.ustaId == '' && workerOnly(ch, ['ustaId', 'ustaName', 'ustaEtiroz']));
     }
     // Muddatni o'zgartirish (usta yoki rahbar): bosqich o'zgarmaydi, sababi tarixga yoziladi
     function muddatUpd(o, n, ch) {
@@ -144,6 +145,11 @@ service cloud.firestore {
     function kirimUpd(o, n, ch) {
       return o.stage == 'kirim' && workerOnly(ch, ['kirimInfo'])
         && ((n.stage == 'shartnoma' && o.tolovTuri == 'muddatli') || (n.stage == 'usta_tasdiq' && o.tolovTuri != 'muddatli'));
+    }
+    // Usta ochiq ishni oladi (usta biriktirilmaydi — birinchi olgan usta bajaradi)
+    function ustaOl(o, n, ch) {
+      return move(o, n, 'ustaga', 'usta_narx') && o.get('ustaId', '') == '' && n.ustaId == uid()
+        && workerOnly(ch, ['ustaId', 'ustaName']);
     }
     // Usta: o'lchov va narxga rozilik (yoki e'tiroz), so'ng o'z ishining bosqichlari ketma-ket
     function ustaUpd(o, n, ch) {
@@ -216,7 +222,7 @@ service cloud.firestore {
           || (hp(p, pm, own, 'ord_branch') && o.branchId == p.branchId)
           || (hp(p, pm, own, 'skoring') && o.tolovTuri == 'muddatli')
           || (hp(p, pm, own, 'olchov') && o.olchovchiId == uid())
-          || (hp(p, pm, own, 'work') && o.ustaId == uid());
+          || (hp(p, pm, own, 'work') && (o.ustaId == uid() || o.stage == 'ustaga'));
       }
       function ordCreate(p, pm, own, n) {
         return p.role == 'admin'
@@ -259,7 +265,7 @@ service cloud.firestore {
                 && changed().hasOnly(['skoring']) && n.skoring.by == uid() && n.skoring.qaror in ['tasdiq', 'bekor'])
             || (hp(p, pm, own, 'assign_usta') && ord().stage in ['ustaga', 'usta_narx', 'usta_tasdiq']
                 && changed().hasOnly(['ustaId', 'ustaHaqi', 'ustaFoiz']))
-            || (hp(p, pm, own, 'kirim') && ord().stage == 'kirim' && changed().hasOnly(['kirim']))
+            || (hp(p, pm, own, 'kirim') && ord().stage == 'kirim' && changed().hasOnly(['kirim', 'ustaId', 'ustaHaqi', 'ustaFoiz']))
             || (hp(p, pm, own, 'assign_usta') && hp(p, pm, own, 'calc') && ord().stage in ['ustaga', 'usta_narx', 'usta_tasdiq']
                 && n.branchId == d.branchId && n.get('skoring', null) == d.get('skoring', null)
                 && n.get('ustaId', null) == d.get('ustaId', null) && n.get('ustaFoiz', null) == d.get('ustaFoiz', null));
@@ -270,13 +276,25 @@ service cloud.firestore {
         allow delete: if false;
       }
     }
-    // Usta haqi summasi — biriktirilgan ustaning o'zi ko'radi (foizini emas)
+    // Usta haqi: main — ishni olgan ustaning haqi (u o'zinikini ko'radi, foizini emas);
+    // t_{uid} — ochiq ishda har bir ustaga taklif qilinadigan haqi (summa): har usta faqat o'zinikini o'qiydi
     match /orders/{oid}/usta/{x} {
-      allow read: if isStaff() && (me().role == 'admin' || hp(me(), roleMap(me().role), ownerUid(), 'see_usta_foiz')
-                                   || hp(me(), roleMap(me().role), ownerUid(), 'assign_usta')
-                                   || get(orderPath(oid)).data.ustaId == uid());
-      allow write: if x == 'main' && isStaff() && (me().role == 'admin' || hp(me(), roleMap(me().role), ownerUid(), 'assign_usta'))
+      function uPerm(k) { return hp(me(), roleMap(me().role), ownerUid(), k); }
+      function taklifPath() { return /databases/$(database)/documents/orders/$(oid)/usta/$('t_' + uid()); }
+      allow read: if isStaff() && (me().role == 'admin' || uPerm('see_usta_foiz') || uPerm('assign_usta') || uPerm('report')
+                                   || get(orderPath(oid)).data.ustaId == uid()
+                                   || x == 't_' + uid());
+      allow write: if x == 'main' && isStaff() && (me().role == 'admin' || uPerm('assign_usta'))
                    && request.resource.data.keys().hasOnly(['ustaId', 'haqi']);
+      // Usta ochiq ishni olayotganda o'z haqini yozadi — faqat unga taklif qilingan summa
+      allow create, update: if x == 'main' && isStaff() && uPerm('work')
+                   && request.resource.data.keys().hasOnly(['ustaId', 'haqi'])
+                   && request.resource.data.ustaId == uid() && getAfter(orderPath(oid)).data.ustaId == uid()
+                   && get(orderPath(oid)).data.stage == 'ustaga'
+                   && request.resource.data.haqi == get(taklifPath()).data.haqi;
+      // Takliflar narxni hisoblaganlar tomonidan yoziladi (ular usta foizini ko'ra oladi)
+      allow write: if x.matches('t_.+') && isStaff() && (me().role == 'admin' || uPerm('ord_edit') || uPerm('assign_usta'))
+                   && request.resource.data.keys().hasOnly(['haqi']);
     }
     // Hisobot va bosh sahifa (barcha buyurtmalar narxi)
     match /{path=**}/pul/{pid} {

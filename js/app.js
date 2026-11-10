@@ -6,7 +6,7 @@ import { getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, collection, coll
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import { firebaseConfig, EMU } from './firebase-config.js';
 import { $, esc, uzs, pct, digits, normPhone, fmtPhone, fdate, fdt, todayStr, parseNum, toast, errText, modal, confirmBox, compressImage, phoneField, comboBox } from './util.js';
-import { mountCalc } from './calc-ui.js';
+import { mountVariants, variantName, VARIANTS } from './variants.js';
 import { renderSettings } from './sozlamalar.js';
 import { renderStaff, renderBranches, createStaffAccount } from './xodimlar.js';
 import { downloadPdf, downloadFinalPdf } from './pdf.js';
@@ -32,7 +32,7 @@ export const STAGES = {
   skoring: { t: 'Shartnomachida', c: 'vio' },
   olchov: { t: "O'lchovda", c: 'gold' },
   olchandi: { t: "O'lchandi — narx tasdig'i", c: 'gold' },
-  ustaga: { t: 'Ustaga biriktirish', c: 'warn' },
+  ustaga: { t: 'Usta kutilmoqda', c: 'warn' },
   usta_narx: { t: "O'lchov narxni tasdig'i", c: 'warn' },
   mijoz_tasdiq: { t: 'Narxni tasdiqlatish', c: 'gold' },
   kirim: { t: 'Mahsulotni kirim qilish', c: 'vio' },
@@ -84,7 +84,9 @@ export const can = k => canP(S.me, S.roles, S.ownerId, k);
 const isAdmin = () => S.me?.role === 'admin';
 export const isOwner = () => !!S.me && S.me.id === S.ownerId;
 export const ctx = { db, auth, app, S, firebaseConfig, can, isOwner, rerender: () => go(S.tab) };
-export const calcSettings = (ustaFoiz = 0) => ({ kalk: S.settings.kalk, xom: S.settings.xom, xomCustom: S.settings.xomCustom, xomDeleted: S.settings.xomDeleted, matraslar: S.settings.matraslar, ustaFoiz });
+// Narx standart usta foizi bilan hisoblanadi (usta oldindan tanlanmaydi)
+export const calcSettings = () => ({ kalk: S.settings.kalk, xom: S.settings.xom, xomCustom: S.settings.xomCustom, xomDeleted: S.settings.xomDeleted, xomMeta: S.settings.xomMeta,
+  matraslar: S.settings.matraslar, extra: S.settings.extra, ustaStdFoiz: Number(S.settings.main.ustaStdFoiz ?? 0.1) });
 const branchName = id => S.branches.find(b => b.id === id)?.name || '—';
 export const roleName = r => S.roles[r]?.name || r;
 // Faol xodimlar, rolida shu ruxsat bor (admin hisoblanmaydi — masalan ustalar ro'yxati)
@@ -134,6 +136,11 @@ const notifyRahbar = (b, o, kind, text) => S.staff
   .filter(p => p.active && !p.deleted && !p.replacedBy && p.id !== S.me.id && (p.role === 'admin' || S.roles[p.role]?.perms?.assign_usta))
   .forEach(p => addNotif(ctx, NQB, o, kind, text, p.id));
 const notify = (b, o, kind, text) => addNotif(ctx, NQB, o, kind, text);
+// Barcha ustalarga: yangi ish ochildi
+// Har bir usta uchun shu ishdagi haqi (summa) oldindan yoziladi: usta faqat o'zinikini ko'radi, foizni emas
+const ustaTaklif = (b, oid, baza) => staffWith('work').forEach(p =>
+  b.set(doc(db, 'orders', oid, 'usta', 't_' + p.id), { haqi: Math.round((baza || 0) * (S.ustaFoiz[p.id] || 0)) }));
+const notifyUstalar = o => staffWith('work').forEach(p => addNotif(ctx, NQB, o, 'ish', `🔨 Yangi ish ochiq: ${o.kategoriya || ''}${o.client?.tuman ? ', ' + o.client.tuman : ''}`, p.id));
 // Bildirishnomalar asosiy o'zgarish bilan bitta paketda emas, undan keyin alohida yuboriladi:
 // ular rad etilsa ham buyurtma bosqichi o'zgaraveradi
 const NQ = [];
@@ -164,6 +171,21 @@ function muddatInfo(o) {
   if (left < 0) return { cls: 'late', t: `${-left} kun kechikdi`, left };
   if (left === 0) return { cls: 'soon', t: 'Bugun topshirish kerak', left };
   return { cls: left <= 2 ? 'soon' : 'wait', t: `⏳ ${left} kun qoldi`, left };
+}
+// Usta muddatdan kechiksa — har bir kechikkan kun uchun mijozga chegirma (sozlamada foiz va chegara)
+function kechikKun(o) {
+  if (o.stage !== 'yakunlandi' || !o.muddat || !o.yetkazildi) return 0;
+  const d = new Date(o.yetkazildi);
+  const ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  return Math.max(0, daysBetween(o.muddat, ds));
+}
+export function kechikChegirma(o, pul) {
+  const kun = kechikKun(o), k = Number(S.settings.main.kechikFoiz ?? 1) || 0;
+  if (!kun || !k || !pul?.result) return null;
+  const max = Number(S.settings.main.kechikMax ?? 0) || 0;
+  const foiz = max ? Math.min(kun * k, max) : kun * k;
+  const t = pul.result.tanlangan || {}, asos = t.oy > 0 ? (t.jami || 0) : (pul.result.naqd || 0);
+  return { kun, k, foiz, asos, summa: Math.round(asos * foiz / 100) };
 }
 const jarimaFoiz = () => Number(S.settings.main.jarimaFoiz ?? 30) || 0;
 const jarimaNote = () => jarimaFoiz() ? `<div class="note bad" style="margin:8px 0 0">⚠️ <b>Eslatma: agar berilgan muddatdan o'tib ketsa, ${jarimaFoiz()}% jarima to'laysiz.</b></div>` : '';
@@ -256,7 +278,7 @@ export async function loadStatic() {
   S.settings = {
     main, kalk: sk.exists() ? (sk.data().cells || {}) : {},
     xom: xom.cells || {}, xomCustom: xom.custom || [], xomDeleted: xom.deleted || [],
-    xomMeta: xom.meta || {}, matraslar: Array.isArray(xom.matras) ? xom.matras : undefined,
+    xomMeta: xom.meta || {}, matraslar: Array.isArray(xom.matras) ? xom.matras : undefined, extra: xom.extra || {},
   };
   S.rolesRaw = sr.exists() ? (sr.data().roles || {}) : {};
   S.roles = mergeRoles(S.rolesRaw);
@@ -304,7 +326,7 @@ function subscribeOrders() {
     if (can('ord_branch')) qs.push(query(col, where('branchId', '==', S.me.branchId || '-')));
     if (can('skoring')) qs.push(query(col, where('tolovTuri', '==', 'muddatli')));
     if (can('olchov')) qs.push(query(col, where('olchovchiId', '==', uid)));
-    if (can('work')) qs.push(query(col, where('ustaId', '==', uid)));
+    if (can('work')) { qs.push(query(col, where('ustaId', '==', uid))); qs.push(query(col, where('stage', '==', 'ustaga'))); }
   }
   S.ordersReady = !qs.length;
   const parts = qs.map(() => null);
@@ -323,7 +345,7 @@ function subscribeOrders() {
     else if (S.view.type === 'order' && !S.view.editing && stamp(S.view.id) !== before) openOrder(S.view.id, true);
   }, e => { $('#page').innerHTML = `<div class="err">${esc(errText(e))}</div>`; })));
 }
-const LIVE_TABS = ['dash', 'orders', 'skoring', 'olchov', 'work', 'history'];
+const LIVE_TABS = ['dash', 'orders', 'skoring', 'olchov', 'open', 'work', 'history'];
 
 function subscribeTopics() {
   S.unsub.push(onSnapshot(collection(db, 'topics'), snap => {
@@ -352,6 +374,7 @@ function tabsFor() {
     || (can('ord_edit') && !isAdmin() && x.stage === 'olchov' && !x.olchovchiId && mine(x))) });
   if (can('skoring') && !isAdmin()) t.push({ id: 'skoring', t: 'Tekshiruv', n: cnt(x => x.stage === 'skoring') });
   if (can('olchov') && !isAdmin()) t.push({ id: 'olchov', t: "O'lchovlar", n: cnt(x => x.stage === 'olchov' && x.olchovchiId === S.me.id) });
+  if (can('work') && !isAdmin()) t.push({ id: 'open', t: 'Ochiq ishlar', n: cnt(x => x.stage === 'ustaga' && !x.ustaId) });
   if (can('work') && !isAdmin()) t.push({ id: 'work', t: 'Ishlarim', n: cnt(x => WORK.includes(x.stage) && x.ustaId === S.me.id) });
   if (!seesOrders && (can('skoring') || can('olchov') || can('work'))) t.push({ id: 'history', t: 'Bajarilgan' });
   if (can('calc')) t.push({ id: 'calc', t: 'Kalkulyator' });
@@ -388,8 +411,9 @@ function go(tab, soft) {
     case 'orders': return renderOrderList(page, { title: can('ord_all') || isAdmin() ? 'Buyurtmalar' : 'Murojaatlar', chips: true, newBtn: can('ord_create') });
     case 'skoring': return renderOrderList(page, { stages: ['skoring'], only: o => o.tolovTuri === 'muddatli', title: 'Tekshiruv kutilmoqda' });
     case 'olchov': return renderOrderList(page, { stages: ['olchov'], only: o => o.olchovchiId === S.me.id, title: "O'lchash kerak" });
+    case 'open': return renderOrderList(page, { stages: ['ustaga'], only: o => !o.ustaId, title: 'Ochiq ishlar' });
     case 'work': return renderOrderList(page, { stages: work, only: o => o.ustaId === S.me.id, title: 'Mening ishlarim', sortMuddat: true });
-    case 'history': return renderOrderList(page, { title: 'Bajarilgan ishlar', only: o => !(o.stage === 'skoring' && can('skoring')) && !(o.stage === 'olchov' && o.olchovchiId === S.me.id) && !(work.includes(o.stage) && o.ustaId === S.me.id) });
+    case 'history': return renderOrderList(page, { title: 'Bajarilgan ishlar', only: o => !(o.stage === 'ustaga' && !o.ustaId) && !(o.stage === 'skoring' && can('skoring')) && !(o.stage === 'olchov' && o.olchovchiId === S.me.id) && !(work.includes(o.stage) && o.ustaId === S.me.id) });
     case 'calc': return renderCalcPage(page);
     case 'report': return renderReport(page, ctx);
     case 'staff': return renderStaff(page, ctx);
@@ -509,7 +533,7 @@ function renderOrderList(page, f) {
     { id: 'jarayon', t: 'Jarayonda', f: x => ACTIVE(x.stage) && x.stage !== 'murojaat' },
     { id: 'qayta', t: "Bugun qo'ng'iroq", f: x => x.stage === 'murojaat' && x.qaytaSana && x.qaytaSana <= todayStr() },
     { id: 'unut', t: 'Unutilgan', f: unutilgan },
-    { id: 'ustaga', t: 'Ustaga biriktirish', f: x => x.stage === 'ustaga' || (x.stage === 'usta_narx' && x.ustaEtiroz) },
+    { id: 'ustaga', t: 'Usta kutilmoqda', f: x => x.stage === 'ustaga' || (x.stage === 'usta_narx' && x.ustaEtiroz) },
     { id: 'kirim', t: 'Kirim qilish', f: x => x.stage === 'kirim' },
     { id: 'prod', t: 'Ishlab chiqarishda', f: x => ['usta_tasdiq', ...PROD].includes(x.stage) },
     { id: 'late', t: 'Kechikayotgan', f: x => muddatInfo(x)?.cls === 'late' },
@@ -671,9 +695,10 @@ function newOrderForm(prefill) {
         stageAt: { murojaat: now }, log: [logEntry('Murojaat yaratildi')], createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
       if (prefill) {
-        const u = ustaInfo(prefill.inputs._usta);
-        b.set(doc(db, 'orders', ref.id, 'pul', 'main'), pulDoc(prefill.inputs, prefill.result, branchId, S.me.id));
-        b.update(ref, { hasCalc: true, ish: prefill.result.ish, taklifUstaId: u?.id || '', taklifUstaName: u?.name || '' });
+        const pd = pulDoc(prefill.inputs, prefill.result, branchId, S.me.id, null, prefill.all);
+        b.set(doc(db, 'orders', ref.id, 'pul', 'main'), pd);
+        ustaTaklif(b, ref.id, pd.ustaBaza);
+        b.update(ref, { hasCalc: true, ish: prefill.result.ish });
       }
       await b.commit();
       m.close(); toast('Murojaat saqlandi'); openOrder(ref.id);
@@ -684,9 +709,14 @@ function newOrderForm(prefill) {
 const ustaInfo = id => { const p = S.staff.find(x => x.id === id); return p ? { id: p.id, name: p.fullName, foiz: S.ustaFoiz[p.id] || 0 } : null; };
 const ustaOptions = () => staffWith('work').map(p => ({ id: p.id, name: staffName(p.id) + (p.mutaxassislik ? ' · ' + p.mutaxassislik : ''), foiz: S.ustaFoiz[p.id] || 0 }));
 
-function pulDoc(inputs, result, branchId, sellerId, prev) {
+// all — 3 variant (mountVariants().getAll()): tanlangani asosiy narx, qolganlari PDF uchun saqlanadi
+function pulDoc(inputs, result, branchId, sellerId, prev, all) {
   const { ish, ...res } = result;
-  const d = { inputs, result: res, ustaBaza: result.ustaBaza || 0, planFoiz: result.ustaFoiz || 0, planUstaId: inputs._usta || '', branchId, sellerId, calcAt: Date.now(), calcBy: S.me.fullName || '' };
+  const d = { inputs, result: res, ustaBaza: result.ustaBaza || 0, planFoiz: result.ustaFoiz || 0, planUstaId: '', branchId, sellerId, calcAt: Date.now(), calcBy: S.me.fullName || '' };
+  if (all) {
+    d.variants = Object.fromEntries(Object.entries(all.variants).map(([k, v]) => { const { ish: _i, ...vr } = v.result; return [k, { inputs: v.inputs, result: vr }]; }));
+    d.tanlanganVariant = all.chosen;
+  }
   if (prev) for (const k of ['skoring', 'ustaHaqi', 'ustaFoiz', 'ustaId', 'narxTarix', 'kirim']) if (prev[k] !== undefined) d[k] = prev[k];
   return d;
 }
@@ -703,6 +733,8 @@ async function openOrder(id, soft) {
     try { const s = await getDoc(doc(db, 'orders', id, 'pul', 'main')); pul = s.exists() ? s.data() : null; } catch (e) { pul = null; }
   }
   if (S.view?.id !== id) return;
+  // Ochiq ish: keyin qo'shilgan ustalar uchun ham haqi yozilib turadi
+  if (pul && o.stage === 'ustaga' && (isAdmin() || can('assign_usta') || sellerOk(o)) && Object.keys(S.ustaFoiz).length) { const b = writeBatch(db); ustaTaklif(b, id, pul.ustaBaza); b.commit().catch(() => {}); }
   const scrollY = soft ? window.scrollY : 0;
   page.innerHTML = orderHtml(o, pul);
   bindOrder(page, o, pul);
@@ -745,6 +777,8 @@ function moneyHtml(o, pul) {
     <div class="total"><div><div class="s">Naqd narx${r.chegirma ? ` (chegirma ${uzs(r.chegirma)})` : ''}</div><div class="big-num">${uzs(r.naqd)}</div></div>
       ${t.oy ? `<div><div class="s">${esc(t.turi)} · oldindan ${uzs(t.old)}</div><div class="big-num">${uzs(t.oylik)}<span class="s"> / oy</span></div><div class="s">Jami: ${uzs(t.jami)} · Qoldiq (kredit): ${uzs(t.qoldiq)}</div></div>` : '<div><div class="s">To\'lov</div><div class="big-num">Naqd</div></div>'}</div>
     ${sk ? `<div class="note ${sk.qaror === 'tasdiq' ? 'ok' : 'bad'}"><b>Shartnomachi: ${sk.qaror === 'tasdiq' ? 'Shartnoma chiqarilsin' : 'Bekor qilindi'}</b> · limit ${uzs(sk.limit)}${sk.izoh ? ' · ' + esc(sk.izoh) : ''}<div class="hint">${esc(sk.byName || '')}, ${fdt(sk.at)}</div></div>` : ''}
+    ${pul.variants && Object.keys(pul.variants).length > 1 ? `<div class="note">Variantlar: ${VARIANTS.filter(([k]) => pul.variants[k]).map(([k, l]) => `${esc(l)} <b>${uzs(pul.variants[k].result.naqd)}</b>${k === pul.tanlanganVariant ? ' <span class="badge ok">mijoz tanladi</span>' : ''}`).join(' · ')}</div>` : ''}
+    ${(() => { const kc = kechikChegirma(o, pul); return kc ? `<div class="note bad">⏰ <b>Kechikish chegirmasi:</b> ${kc.kun} kun × ${kc.k}% = ${kc.foiz}% → <b>−${uzs(kc.summa)}</b><div class="hint">Mijoz to'laydigan summa: ${uzs(kc.asos - kc.summa)}</div></div>` : ''; })()}
     ${(pul.narxTarix || []).length ? `<h3>Narx o'zgarishlari</h3><ul class="log">${pul.narxTarix.map(h => `<li>${uzs(h.eski)} → <b>${uzs(h.yangi)}</b> · ${esc(h.izoh)}<div class="t">${esc(h.n)}, ${fdt(h.t)}</div></li>`).join('')}</ul>` : ''}
     <p class="hint">Hisob: ${esc(pul.calcBy || '')}, ${fdt(pul.calcAt)}</p>
   </div>`;
@@ -829,7 +863,9 @@ function actionsHtml(o, pul) {
   const me = S.me.id, adm = isAdmin();
   const st = o.stage;
   const pdfBtns = [
-    pdfReady(o, pul) ? `<button class="btn gold" data-a="pdf">⬇ PDF narx taklifi</button>` : '',
+    pdfReady(o, pul) ? (pul.variants && Object.keys(pul.variants).length > 1
+      ? VARIANTS.filter(([k]) => pul.variants[k]).map(([k, l]) => `<button class="btn gold" data-a="pdfv" data-v="${k}">⬇ PDF: ${esc(l)}${k === pul.tanlanganVariant ? ' ✓' : ''}</button>`).join('')
+      : `<button class="btn gold" data-a="pdf">⬇ PDF narx taklifi</button>`) : '',
     st === 'yakunlandi' && (adm || can('final_pdf')) ? `<button class="btn gold" data-a="finalpdf">⬇ Yakuniy PDF</button>` : '',
   ].join('');
   const blocks = [];
@@ -922,16 +958,23 @@ function actionsHtml(o, pul) {
   }
   // To'lov turini usta ishni qabul qilguncha o'zgartirish mumkin
   if (PRE.includes(st) && st !== 'murojaat' && (adm || (sellerOk(o) && can('calc')))) blocks.push(`<button class="btn sec sm" data-a="payChange" style="margin-top:10px">${muddatli(o) ? '💵 Naqd savdoga o\'tkazish' : '💳 Muddatli to\'lovga o\'tkazish'}</button>`);
+  // Usta biriktirilmaydi: ish barcha ustalarga ochiq, birinchi "Ishni olaman" degan usta oladi
+  if (st === 'ustaga' && can('work') && !adm) blocks.push(`<h3 style="margin-top:0">🔨 Ochiq ish</h3>
+    <p class="hint" style="margin-top:-4px">Pastdagi o'lchov natijasi va ish tarkibini ko'ring. Ishni birinchi bo'lib olgan usta bajaradi.</p>
+    <p id="takeHaqi" class="muted">Haqingiz hisoblanmoqda…</p>
+    <button class="btn green block" data-a="take">✓ Ishni olaman</button>`);
+  else if (st === 'ustaga') wait('Ish ustalar uchun ochiq — birinchi bo\'lib olgan usta bajaradi');
+  if (st === 'usta_narx' && (adm || can('assign_usta')) && o.ustaId) blocks.push(`<button class="btn sec sm" data-a="unassign" style="margin-top:8px">↺ Ishni ustalar ro'yxatiga qaytarish</button>`);
+  // Admin: kerak bo'lsa ustani o'zi belgilaydi
   if (st === 'ustaga' || st === 'usta_narx' || st === 'usta_tasdiq') {
-    if (adm || can('assign_usta')) {
+    if (adm) {
       const ustalar = staffWith('work');
       const sel = o.ustaId || o.taklifUstaId;
-      blocks.push(`<h3 style="margin-top:${blocks.length ? 14 : 0}px">${st === 'ustaga' ? 'Ustaga biriktirish' : 'Ustani almashtirish'}</h3>
-        ${o.taklifUstaName && st === 'ustaga' ? `<p class="hint" style="margin-top:-4px">Sotuvchi tanlagan usta: <b>${esc(staffName(o.taklifUstaId, o.taklifUstaName))}</b></p>` : ''}
+      blocks.push(`<h3 style="margin-top:${blocks.length ? 14 : 0}px">${st === 'ustaga' ? 'Ustani belgilash (admin)' : 'Ustani almashtirish (admin)'}</h3>
         <div class="field"><select class="inp" id="ustaSel"><option value="">— usta tanlang —</option>${byHudud(ustalar, o.client).map(u => `<option value="${u.id}" ${u.id === sel ? 'selected' : ''}>${esc(staffName(u.id))}${u.mutaxassislik ? ' · ' + esc(u.mutaxassislik) : ''}</option>`).join('')}</select></div>
         <div id="ustaHaqiPrev" class="hint"></div>
-        <button class="btn pri block" data-a="assign">${st === 'ustaga' ? 'Tasdiqlash va biriktirish' : 'Almashtirish'}</button>`);
-    } else if (st === 'ustaga') wait('Mebel rahbari ustani biriktirishini kutmoqda');
+        <button class="btn sec block" data-a="assign">${st === 'ustaga' ? 'Belgilash' : 'Almashtirish'}</button>`);
+    }
   }
   if (['usta_tasdiq', ...PROD].includes(st)) {
     const mine = o.ustaId === me && can('work');
@@ -952,7 +995,7 @@ function actionsHtml(o, pul) {
   // Rahbar: muddatni o'zgartirish (usta bo'lmasa ham) va usta qabul qilish bosqichida sotuv narxini o'zgartirish
   if (!adm && can('assign_usta') && PROD.includes(st) && o.muddat && o.ustaId !== me) blocks.push(`<button class="btn sec sm" data-a="muddat" style="margin-top:8px">📅 Muddatni o'zgartirish</button>`);
   if ((st === 'ustaga' || st === 'usta_narx' || st === 'usta_tasdiq') && canRahbarPrice()) blocks.push(`<button class="btn sec block" data-a="calc" style="margin-top:10px">✏️ Mebel narxini o'zgartirish</button>`);
-  if (pdfBtns) blocks.push(`<div class="row2" style="margin-top:${blocks.length ? 12 : 0}px">${pdfBtns}</div>`);
+  if (pdfBtns) blocks.push(`<div class="pdf-btns" style="margin-top:${blocks.length ? 12 : 0}px">${pdfBtns}</div>`);
   return blocks.join('');
 }
 
@@ -993,7 +1036,12 @@ function bindOrder(page, o, pul) {
   });
   on('calc', () => openCalcForOrder(o, pul));
   on('pdf', () => downloadPdf(o, pul, S, branchName(o.branchId)));
-  on('finalpdf', () => downloadFinalPdf(o, S, ctx));
+  on('pdfv', b => {
+    const k = b.dataset.v, v = pul.variants[k];
+    const tanlangan = k === pul.tanlanganVariant;
+    return downloadPdf(o, { ...pul, result: v.result, skoring: tanlangan ? pul.skoring : null }, S, branchName(o.branchId), variantName(k));
+  });
+  on('finalpdf', () => downloadFinalPdf(o, S, ctx, { kech: kechikChegirma(o, pul) }));
   on('cancel', async () => {
     const m = modal(`<h2>Murojaatni bekor qilish</h2><div class="field"><label>Sababi *</label><input class="inp" id="cs" maxlength="300"></div><button class="btn red block" id="csb">Bekor qilish</button>`);
     m.el.querySelector('#csb').onclick = async () => {
@@ -1027,7 +1075,7 @@ function bindOrder(page, o, pul) {
     if (olN < minRasm()) throw new Error(`Kamida ${minRasm()} ta rasm yuklang (hozir ${olN} ta)`);
     if (!iz) throw new Error("O'lchamlarni yozing");
     await upd({ stage: isNewFlow(o) ? 'ustaga' : 'olchandi', olchov: { izoh: iz, t: Date.now(), n: S.me.fullName || '', u: o.olchovchiId === S.me.id ? S.me.id : o.olchovchiId } }, `O'lchandi (${olN} ta rasm)`,
-      b => notify(b, o, 'olchandi', `📏 O'lchandi. Narxni tekshirib, ustaga yuboring`));
+      b => { notify(b, o, 'olchandi', `📏 O'lchandi. Ish ustalarga ochildi`); if (isNewFlow(o)) notifyUstalar(o); });
   });
   // Sotuvchi: o'lchovdan keyin
   on('toUsta', async () => {
@@ -1078,6 +1126,32 @@ function bindOrder(page, o, pul) {
     return upd({ stage: nx[0] }, nx[1] + nomidan, null, usNom);
   });
   if ($('#yetkUp')) photoUploader($('#yetkUp'), o, 'yetkazish', n => { yeN = n; setCnt('yeCnt', n); });
+  // ---- Usta ishni oladi (o'z foizi bilan haqi hisoblanadi) ----
+  const takeEl = $('#takeHaqi');
+  const takeCalc = async () => {
+    const t = await getDoc(doc(db, 'orders', o.id, 'usta', 't_' + S.me.id));
+    if (!t.exists()) throw new Error("Haqingiz hali hisoblanmagan — sotuvchi yoki rahbar buyurtmani ochishi kerak");
+    return t.data().haqi || 0;
+  };
+  if (takeEl) takeCalc().then(h => { takeEl.innerHTML = `Sizning haqingiz: <b>${uzs(h)}</b>`; }).catch(e => { takeEl.textContent = errText(e); });
+  on('take', async () => {
+    const haqi = await takeCalc();
+    if (!await confirmBox(`Bu ishni olasizmi?<br>Haqingiz: <b>${uzs(haqi)}</b>`, 'Ha, olaman')) return;
+    try {
+      await upd({ stage: 'usta_narx', ustaId: S.me.id, ustaName: S.me.fullName || '' }, `Usta ishni oldi: ${S.me.fullName || ''}`, b => {
+        b.set(doc(db, 'orders', o.id, 'usta', 'main'), { ustaId: S.me.id, haqi });
+        notifyRahbar(b, o, 'usta', `🔨 ${staffName(S.me.id)} ishni oldi`);
+        notify(b, o, 'usta', `🔨 ${staffName(S.me.id)} ishni oldi`);
+      });
+    } catch (e) { throw e?.code === 'permission-denied' ? new Error('Bu ishni boshqa usta olib bo\'ldi') : e; }
+  });
+  on('unassign', async () => {
+    if (!await confirmBox(`${esc(staffName(o.ustaId, o.ustaName))} bu ishdan chiqariladi va ish yana barcha ustalarga ochiladi. Davom etasizmi?`, 'Qaytarish')) return;
+    await upd({ stage: 'ustaga', ustaId: '', ustaName: '', ustaEtiroz: null }, `Ish ustalar ro'yxatiga qaytarildi (${o.ustaName})`, b => {
+      b.set(doc(db, 'orders', o.id, 'usta', 'main'), { ustaId: '', haqi: 0 });
+      notifyUstalar(o);
+    });
+  });
   // ---- Yangi bosqichlar ----
   const usNom = o.ustaId !== S.me.id ? o.ustaName : '';
   on('un-ok', async () => {
@@ -1118,7 +1192,9 @@ function bindOrder(page, o, pul) {
     const next = muddatli(o) ? 'shartnoma' : 'usta_tasdiq';
     await upd({ stage: next, kirimInfo: { hujjat, izoh, rasm: kN, t: Date.now(), n: S.me.fullName || '' } }, `Mahsulot kirim qilindi: nakladnoy №${hujjat}`,
       b => {
-        b.set(doc(db, 'orders', o.id, 'pul', 'main'), { kirim: { summa, hujjat, izoh, t: Date.now(), n: S.me.fullName || '' } }, { merge: true });
+        const uf = S.ustaFoiz[o.ustaId] ?? null;
+        b.set(doc(db, 'orders', o.id, 'pul', 'main'), { kirim: { summa, hujjat, izoh, t: Date.now(), n: S.me.fullName || '' },
+          ...(o.ustaId && !pul?.ustaId && uf != null ? { ustaId: o.ustaId, ustaFoiz: uf, ustaHaqi: Math.round((pul?.ustaBaza || 0) * uf) } : {}) }, { merge: true });
         notify(b, o, 'kirim', muddatli(o) ? '📦 Mahsulot kirim qilindi — shartnoma tuzing' : '📦 Mahsulot kirim qilindi — usta ishni qabul qilishi kutilmoqda');
         if (!muddatli(o)) addNotif(ctx, NQB, o, 'ish', '🔨 Yangi ish: qabul qilib, yakunlash sanasini belgilang', o.ustaId);
       });
@@ -1279,16 +1355,19 @@ function openCalcForOrder(o, pul, opts = {}) {
     <div class="res-bar"><div class="in"><div class="price"><b id="rbPrice">—</b><span id="rbSub"></span></div>
       <button class="btn pri" id="saveCalc">Saqlash</button></div></div>`;
   $('#back').onclick = () => { S.view = { type: 'order', id: o.id }; openOrder(o.id); };
-  const inputs = { ...(pul?.inputs || {}) };
-  if (!inputs._usta && o.taklifUstaId) inputs._usta = o.taklifUstaId;
-  const c = mountCalc($('#calcRoot'), {
-    inputs, settings: calcSettings(), ustalar: ustaOptions(), showTan: isAdmin() || can('see_cost'), canDiscount: isAdmin() || can('discount'), payMode,
+  // 3 variant: avval saqlanganlar, bo'lmasa — joriy hisob "Mijoz xohlagan" variantida
+  const vIn = {};
+  if (pul?.variants) for (const [k, v] of Object.entries(pul.variants)) vIn[k] = v.inputs;
+  else if (pul?.inputs) vIn.mijoz = pul.inputs;
+  const vm = mountVariants($('#calcRoot'), {
+    variants: vIn, chosen: pul?.tanlanganVariant || 'mijoz', settings: calcSettings(), showTan: isAdmin() || can('see_cost'), canDiscount: isAdmin() || can('discount'), payMode,
     onChange: r => { $('#rbPrice').textContent = r ? uzs(r.naqd) : '—'; $('#rbSub').textContent = r && r.tanlangan.oy ? `${r.tanlangan.turi}: ${uzs(r.tanlangan.oylik)} / oy` : 'Naqd'; },
   });
   $('#saveCalc').onclick = async () => {
-    const r = c.getResult();
-    if (!r || !r.naqd) { toast("Narx 0 — mahsulot qo'shing", true); return; }
-    if ((r.on.spalniy || r.on.korpus) && !c.ustaId()) { toast('Ustani tanlang', true); return; }
+    const all = vm.getAll();
+    const sel = all.variants[all.chosen];
+    if (!sel) { toast("Mijoz tanlagan variantda narx 0 — mahsulot qo'shing", true); return; }
+    const r = sel.result;
     let izoh = '';
     const old = pul?.result?.naqd;
     const needReason = (old && Math.round(old) !== Math.round(r.naqd) && o.stage !== 'murojaat') || !!opts.payTo;
@@ -1302,25 +1381,27 @@ function openCalcForOrder(o, pul, opts = {}) {
     if (!opts.payTo && o.tolovTuri && o.stage !== 'murojaat' && ((r.tanlangan.oy > 0) !== (o.tolovTuri === 'muddatli'))) {
       toast("Rasmiylashtirilgan buyurtmada to'lov turini (naqd/muddatli) o'zgartirib bo'lmaydi", true); return;
     }
-    // Usta biriktirilgandan keyin (rahbar narxni o'zgartirsa): muddatli limitdan oshsa — shartnomachiga qaytadi
+    // Usta bosqichlarida (rahbar narxni o'zgartirsa): muddatli limitdan oshsa — shartnomachiga qaytadi
     const ustaStage = ['ustaga', 'usta_narx', 'usta_tasdiq'].includes(o.stage);
     const overLimit = !opts.payTo && (ustaStage || ['mijoz_tasdiq', 'kirim', 'shartnoma'].includes(o.stage)) && o.tolovTuri === 'muddatli' && pul?.skoring && r.tanlangan.qoldiq > (pul.skoring.limit || 0);
     if (overLimit && !await confirmBox(`Yangi kredit summasi (${uzs(r.tanlangan.qoldiq)}) shartnomachi bergan limitdan (${uzs(pul.skoring.limit)}) oshdi. Buyurtma shartnomachiga qayta tekshiruvga yuboriladi.`, 'Saqlash va yuborish')) return;
     $('#saveCalc').disabled = true;
     try {
       const b = writeBatch(db);
-      const pd = pulDoc(c.getInputs(), r, o.branchId, o.sellerId, pul);
+      const pd = pulDoc(sel.inputs, r, o.branchId, o.sellerId, pul, all);
       pd.narxTarix = pul?.narxTarix || [];
       if (needReason) pd.narxTarix = [...pd.narxTarix, { eski: old, yangi: r.naqd, izoh, t: Date.now(), n: S.me.fullName || '' }];
-      // Biriktirilgan ustaning haqi yangi hisobga qarab qayta hisoblanadi (foizi o'zgarmaydi)
-      if (ustaStage && pul?.ustaId && pul.ustaFoiz != null) {
-        pd.ustaHaqi = Math.round((pd.ustaBaza || 0) * pul.ustaFoiz);
-        b.set(doc(db, 'orders', o.id, 'usta', 'main'), { ustaId: pul.ustaId, haqi: pd.ustaHaqi });
+      // Ishni olgan ustaning haqi yangi hisobga qarab qayta hisoblanadi (o'z foizi bilan)
+      if (o.ustaId && ustaStage) {
+        const foiz = pul?.ustaFoiz ?? S.ustaFoiz[o.ustaId] ?? 0;
+        const haqi = Math.round((pd.ustaBaza || 0) * foiz);
+        if (pul?.ustaId) pd.ustaHaqi = haqi;
+        b.set(doc(db, 'orders', o.id, 'usta', 'main'), { ustaId: o.ustaId, haqi });
       }
       b.set(doc(db, 'orders', o.id, 'pul', 'main'), pd);
+      ustaTaklif(b, o.id, pd.ustaBaza);
       const msg = !old ? `Narx hisoblandi: ${uzs(r.naqd)}` : Math.round(old) === Math.round(r.naqd) ? 'Hisob yangilandi (narx o\'zgarmadi)' : `Narx o'zgardi: ${uzs(old)} → ${uzs(r.naqd)}${izoh ? ' (' + izoh + ')' : ''}`;
-      const u = ustaInfo(c.ustaId());
-      const of = { hasCalc: true, ish: r.ish, taklifUstaId: u?.id || '', taklifUstaName: u?.name || '', updatedAt: serverTimestamp(), log: arrayUnion(logEntry(msg)) };
+      const of = { hasCalc: true, ish: r.ish, updatedAt: serverTimestamp(), log: arrayUnion(logEntry(msg)) };
       if (overLimit) { of.stage = 'skoring'; of.skQaytish = o.stage; of['stageAt.skoring'] = Date.now(); of.log = arrayUnion(logEntry(msg), logEntry('Narx limitdan oshdi — shartnomachiga qayta yuborildi')); }
       // To'lov turini almashtirish: muddatliga — skoringga (keyin shu bosqichga qaytadi), naqdga — skoring/shartnomadan chiqadi
       if (opts.payTo) {
@@ -1344,27 +1425,30 @@ function openCalcForOrder(o, pul, opts = {}) {
   };
 }
 
-// Mustaqil kalkulyator
+// Mustaqil kalkulyator (3 variant bilan)
 function renderCalcPage(page) {
-  page.innerHTML = `<h2>Kalkulyator</h2><p class="hint" style="margin-top:-6px">Tezkor narx hisoblash. Mijoz rozi bo'lsa, shu hisob bilan murojaat oching.</p><div id="calcRoot"></div>
+  page.innerHTML = `<h2>Kalkulyator</h2><p class="hint" style="margin-top:-6px">Tezkor narx hisoblash. Arzon, mijoz xohlagan va premium variantlarni alohida hisoblang. Mijoz rozi bo'lsa, shu hisob bilan murojaat oching.</p><div id="calcRoot"></div>
     <div class="res-bar"><div class="in"><div class="price"><b id="rbPrice">—</b><span id="rbSub"></span></div>
-    ${isAdmin() || can('pdf') ? `<button class="btn gold" id="calcPdf">⬇ PDF</button>` : ''}
+    ${isAdmin() || can('pdf') ? `<button class="btn gold" id="calcPdf">⬇ PDF (shu variant)</button>` : ''}
     ${isAdmin() || can('ord_create') ? `<button class="btn pri" id="toOrder">Murojaat ochish</button>` : ''}</div></div>`;
-  let c = null;
-  c = mountCalc($('#calcRoot'), {
-    inputs: S.calcDraft, settings: calcSettings(), ustalar: ustaOptions(), showTan: isAdmin() || can('see_cost'), canDiscount: isAdmin() || can('discount'),
-    onChange: r => { if (c) S.calcDraft = c.getInputs(); $('#rbPrice').textContent = r ? uzs(r.naqd) : '—'; $('#rbSub').textContent = r && r.tanlangan.oy ? `${r.tanlangan.turi}: ${uzs(r.tanlangan.oylik)} / oy` : 'Naqd'; },
+  const d = S.calcDraft || {};
+  const vm = mountVariants($('#calcRoot'), {
+    variants: d.variants || {}, chosen: d.chosen, settings: calcSettings(), showTan: isAdmin() || can('see_cost'), canDiscount: isAdmin() || can('discount'),
+    onChange: r => { $('#rbPrice').textContent = r ? uzs(r.naqd) : '—'; $('#rbSub').textContent = r && r.tanlangan.oy ? `${r.tanlangan.turi}: ${uzs(r.tanlangan.oylik)} / oy` : 'Naqd'; },
   });
+  // Sahifadan chiqib qaytsangiz ham hisob saqlanib turadi
+  const keep = () => { const a = vm.getAll(); S.calcDraft = { variants: Object.fromEntries(Object.entries(a.variants).map(([k, v]) => [k, v.inputs])), chosen: a.chosen }; };
+  $('#calcRoot').addEventListener('change', () => setTimeout(keep, 300));
   $('#toOrder') && ($('#toOrder').onclick = () => {
-    const r = c.getResult();
-    if (!r || !r.naqd) { toast("Narx 0 — mahsulot qo'shing", true); return; }
-    if ((r.on.spalniy || r.on.korpus) && !c.ustaId()) { toast('Ustani tanlang', true); return; }
-    newOrderForm({ inputs: c.getInputs(), result: r });
+    keep();
+    const all = vm.getAll(), sel = all.variants[all.chosen];
+    if (!sel) { toast("Mijoz tanlagan variantda narx 0 — mahsulot qo'shing", true); return; }
+    newOrderForm({ inputs: sel.inputs, result: sel.result, all });
   });
   $('#calcPdf') && ($('#calcPdf').onclick = async () => {
-    const r = c.getResult();
+    const r = vm.calc().getResult();
     if (!r || !r.naqd) { toast("Narx 0 — mahsulot qo'shing", true); return; }
-    try { await downloadPdf({ no: '—', client: { name: '' }, sellerName: S.me.fullName, mebelTuri: 'yigiladigan' }, { result: r }, S, branchName(S.me.branchId)); } catch (e) { toast(errText(e), true); }
+    try { await downloadPdf({ no: '—', client: { name: '' }, sellerName: S.me.fullName, mebelTuri: 'yigiladigan' }, { result: r }, S, branchName(S.me.branchId), variantName(vm.current())); } catch (e) { toast(errText(e), true); }
   });
 }
 
@@ -1603,6 +1687,7 @@ ctx.hududHtml = hududHtml;
 ctx.bindHudud = bindHudud;
 ctx.muddatInfo = muddatInfo;
 ctx.staffName = staffName;
+ctx.kechikChegirma = kechikChegirma;
 ctx.filterHtml = filterHtml;
 ctx.bindFilters = bindFilters;
 ctx.applyFilters = applyFilters;

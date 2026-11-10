@@ -95,7 +95,6 @@ await page.waitForSelector('[data-a="calc"]');
 await page.click('[data-a="calc"]');
 await page.check('[data-sec="Buyurtma!B11"]');
 await page.waitForSelector('[data-k="Spalniy!C8"]');
-await page.selectOption('[data-k="_usta"]', { index: 1 });
 await page.fill('[data-k="Spalniy!C8"]', '260');
 await page.selectOption('[data-k="Buyurtma!B20"]', '6 oy');
 await page.fill('[data-link="oldPct"]', '20');
@@ -103,6 +102,13 @@ await page.fill('[data-link="chegSum"]', '500 000');
 await page.waitForTimeout(800);
 await shot(page, 'kalkulyator');
 const price1 = await page.textContent('#rbPrice');
+await page.click('.vtab[data-v="premium"]');
+await page.waitForSelector('.vtab.on[data-v="premium"]');
+await page.fill('[data-k="Spalniy!C8"]', '280');
+await page.waitForTimeout(800);
+console.log('Variantlar:', (await page.locator('.vtab small').allTextContents()).join(' | '));
+await page.click('.vtab[data-v="mijoz"]');
+await page.waitForTimeout(500);
 await page.click('#saveCalc');
 await page.waitForSelector('[data-a="formal"]', { timeout: 20000 });
 console.log('Rasmiylashtirish tugmasi:', (await page.textContent('[data-a="formal"]')).trim());
@@ -117,7 +123,8 @@ await page.waitForSelector('#fmBtn:visible');
 await shot(page, 'rasmiylashtirish');
 await page.click('#fmBtn');
 await page.waitForSelector('.badge:has-text("Shartnomachida")', { timeout: 20000 }); await saved(page);
-const preDl = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.locator('[data-a="pdf"]').click()]);
+console.log('PDF tugmalari:', (await page.locator('[data-a="pdfv"]').allTextContents()).join(' | '));
+const preDl = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.locator('[data-a="pdfv"]').first().click()]);
 await preDl[0].saveAs(`${SHOTS}/narx-taklifi-oldin.pdf`);
 console.log('Narx:', price1, '| shartnomadan oldin PDF yuklandi');
 await page.context().close();
@@ -159,7 +166,7 @@ await page.waitForSelector('#olchovUp .ph >> nth=3', { timeout: 20000 });
 await page.fill('#olchovIzoh', "Devor 280 sm, shift 265 sm. Shkaf uchun joy 260×60.");
 await shot(page, 'olchovchi');
 await page.click('[data-a="olchandi"]');
-await page.waitForSelector('.badge:has-text("Ustaga biriktirish")', { timeout: 20000 }); await saved(page);
+await page.waitForSelector('.badge:has-text("Usta kutilmoqda")', { timeout: 20000 }); await saved(page);
 console.log("O'lchovchi narxni ko'radimi:", !!seesPrice);
 await page.context().close();
 
@@ -173,7 +180,7 @@ await page.click('.nitem'); await page.waitForSelector('#back');
 console.log("O'lchovdan keyingi bosqich:", (await page.textContent('h2 + div .badge:last-child, .badge >> nth=0')).trim());
 await page.context().close();
 
-// 8. Rahbar: narxni o'zgartiradi (sababi bilan) va ustani biriktiradi
+// 8. Rahbar: narxni o'zgartiradi (sababi bilan); usta biriktirilmaydi — ish ustalarga ochiq
 page = await newPage();
 await login(page, '905555555', 'Parol1234');
 await page.click('[data-chip="ustaga"]');
@@ -186,18 +193,20 @@ await page.click('#saveCalc');
 await page.waitForSelector('#rz');
 await page.fill('#rz', "O'lchovdan keyin shkaf 250 sm bo'ldi");
 await page.click('#rzb');
-await page.waitForSelector('#ustaSel', { timeout: 20000 });
-await page.selectOption('#ustaSel', { index: 1 });
-await page.waitForTimeout(300);
+await saved(page);
 await shot(page, 'rahbar');
-await page.click('[data-a="assign"]');
-await page.waitForSelector(".badge:has-text(\"O'lchov narxni tasdig'i\")", { timeout: 20000 }); await saved(page);
 await page.context().close();
 
-// 9. Usta: avval e'tiroz, keyin o'lchov va narxga rozilik
+// 9. Usta: ochiq ishni oladi; avval e'tiroz, keyin o'lchov va narxga rozilik
 page = await newPage();
 await login(page, '906666666', 'Parol1234');
+await page.click('[data-tab="open"]');
 await openFirst(page);
+await page.waitForSelector('#takeHaqi b', { timeout: 15000 });
+console.log('Ishni olishdan oldin haqi:', (await page.textContent('#takeHaqi')).trim());
+await shot(page, 'usta-ochiq-ish');
+await page.click('[data-a="take"]'); await page.click('.modal [data-ok]');
+await page.waitForSelector(".badge:has-text(\"O'lchov narxni tasdig'i\")", { timeout: 20000 }); await saved(page);
 await page.waitForSelector('#ustaHaqiMe b', { timeout: 15000 });
 console.log('Usta o\'z haqini ko\'radi:', (await page.textContent('#ustaHaqiMe')).trim());
 await page.click('[data-a="un-no"]'); await page.fill('#etz', 'Shkaf chuqurligini aniqlash kerak'); await page.click('#etzb'); await saved(page);
@@ -217,8 +226,8 @@ await page.waitForSelector('#toast.show.bad');
 await page.setInputFiles('#mtUp [data-ph]', IMG);
 await page.waitForSelector('#mtUp .ph', { timeout: 20000 });
 await shot(page, 'mijoz-tasdiq');
-if (await page.locator('[data-a="pdf"]').count()) {
-  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.locator('[data-a="pdf"]').click()]);
+if (await page.locator('[data-a="pdfv"]').count()) {
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.locator('[data-a="pdfv"]').nth(1).click()]);
   await dl.saveAs(`${SHOTS}/narx-taklifi.pdf`);
   console.log('PDF yuklandi:', dl.suggestedFilename());
 }
@@ -254,6 +263,7 @@ await page.context().close();
 // 11. Usta: ishni qabul qiladi, muddatni o'zgartiradi
 page = await newPage();
 await login(page, '906666666', 'Parol1234');
+await page.click('[data-tab="work"]');
 await openFirst(page);
 await shot(page, 'usta');
 await page.fill('#muddatIn', '2030-12-31');
@@ -281,6 +291,7 @@ await page.context().close();
 // 12. Usta: ish bosqichlari va yetkazib berish
 page = await newPage();
 await login(page, '906666666', 'Parol1234');
+await page.click('[data-tab="work"]');
 await openFirst(page);
 for (let i = 0; i < 3; i++) { await page.waitForTimeout(3000); await page.locator('[data-a="u-next"]').click(); await saved(page); }
 await page.waitForSelector('#yetkUp input[type=file]', { state: 'attached', timeout: 20000 });

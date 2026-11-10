@@ -58,7 +58,8 @@ function header(nomi, kontakt, title, sub, badge) {
     </div>`;
 }
 
-export async function downloadPdf(o, pul, S, branchName) {
+// variant — "Arzon" / "Mijoz xohlagan" / "Premium" (3 variantli hisobda)
+export async function downloadPdf(o, pul, S, branchName, variant) {
   if (!pul?.result) { toast('Avval narxni hisoblang', true); return; }
   toast('PDF tayyorlanmoqda…');
   const st = { kalk: S.settings.kalk, xom: S.settings.xom };
@@ -68,7 +69,8 @@ export async function downloadPdf(o, pul, S, branchName) {
   const sana = new Date().toLocaleDateString('ru-RU');
   const ok = pul.skoring?.qaror === 'tasdiq';
   const muddatli = o.tolovTuri ? o.tolovTuri === 'muddatli' : t.oy > 0;
-  const title = ok ? 'NARX TAKLIFI — TASDIQLANGAN' : 'NARX TAKLIFI';
+  const title = (ok ? 'NARX TAKLIFI — TASDIQLANGAN' : 'NARX TAKLIFI') + (variant ? `<div style="font-size:12px;color:#5F6B82">${esc(variant)} varianti</div>` : '');
+  const kFoiz = Number(S.settings.main.kechikFoiz ?? 1) || 0;
   const badge = ok ? `<div style="color:#1E8A4C;font-weight:700;font-size:11px">✓ Tasdiqlangan: ${new Date(pul.skoring.at).toLocaleDateString('ru-RU')}</div>` : '';
   const html = `
   <div style="font-family:Arial,Helvetica,sans-serif;color:#141C2E;font-size:11.5px;width:${W}px;box-sizing:border-box">
@@ -82,7 +84,7 @@ export async function downloadPdf(o, pul, S, branchName) {
     <table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:11px">
       <colgroup><col style="width:26px"><col style="width:96px"><col><col style="width:62px"><col style="width:100px"><col style="width:104px"></colgroup>
       <thead><tr><th style="${th()}">№</th><th style="${th()}">Mahsulot</th><th style="${th()}">Tavsif</th><th style="${th()}">Miqdori</th><th style="${th(1)}">Birlik narxi</th><th style="${th(1)}">Summa</th></tr></thead>
-      <tbody>${r.lines.map((l, i) => `<tr><td style="${td()}">${i + 1}</td><td style="${td()}"><b>${esc(l.mahsulot)}</b></td><td style="${td()}">${esc(l.tavsif)}</td><td style="${td()}">${esc(l.miqdor)}</td><td style="${td('text-align:right;white-space:nowrap')}">${uzs(l.birlik)}</td><td style="${td('text-align:right;white-space:nowrap')}">${uzs(l.summa)}</td></tr>`).join('')}</tbody>
+      <tbody>${r.lines.map((l, i) => `<tr><td style="${td()}">${i + 1}</td><td style="${td()}"><b>${esc(l.mahsulot)}</b></td><td style="${td()}">${esc(l.tavsif)}</td><td style="${td()}">${esc(l.miqdor)}</td><td style="${td('text-align:right;white-space:nowrap')}">${l.info ? '' : uzs(l.birlik)}</td><td style="${td('text-align:right;white-space:nowrap')}">${l.info ? '—' : uzs(l.summa)}</td></tr>`).join('')}</tbody>
     </table>
     <table class="keep" style="width:100%;margin-top:8px;font-size:12.5px;border-collapse:collapse">
       ${r.chegirma ? `<tr><td style="text-align:right;padding:2px 8px">Jami:</td><td style="text-align:right;width:150px;padding:2px 0">${uzs(r.sotuv)}</td></tr><tr><td style="text-align:right;padding:2px 8px">Chegirma:</td><td style="text-align:right;padding:2px 0">− ${uzs(r.chegirma)}</td></tr>` : ''}
@@ -100,6 +102,7 @@ export async function downloadPdf(o, pul, S, branchName) {
       <thead><tr>${["To'lov turi", "Oylik to'lov", 'Oy', "Oldindan to'lov", "Jami to'lov"].map((h, i) => `<th style="${th(i)}">${h}</th>`).join('')}</tr></thead>
       <tbody>${r.tariflar.filter(v => v.oy).map(v => { const sel = v.oy === t.oy; const c = td(sel ? 'background:#E3F4EA;font-weight:700;' : ''); return `<tr><td style="${c}">${esc(v.turi)}</td><td style="${c}text-align:right">${v.oy ? uzs(v.oylik) : '—'}</td><td style="${c}text-align:right">${v.oy || '—'}</td><td style="${c}text-align:right">${v.oy ? uzs(t.old) : '—'}</td><td style="${c}text-align:right">${uzs(v.jami)}</td></tr>`; }).join('')}</tbody>
     </table></div>` : `<div class="keep" style="margin-top:12px;background:#EAF0FA;border:1px solid #C5D2EC;border-radius:6px;padding:8px 10px"><b>Naqd savdo</b> — ${uzs(r.naqd)}</div>`}
+    ${kFoiz ? `<div class="keep" style="margin-top:10px;border:1px solid #F0C4BF;background:#FBEAE8;border-radius:6px;padding:7px 10px;font-size:11px"><b>Kafolat:</b> mebel kelishilgan muddatdan kechiksa, har bir kechikkan kun uchun narxdan <b>${kFoiz}% chegirma</b> qilinadi.</div>` : ''}
     <p style="color:#5F6B82;font-size:10px;margin-top:8px">Narxlar ${sana} holatiga ko'ra hisoblangan.${muddatli ? ' Yashil qator — tanlangan to\'lov turi.' : ''}${o.mebelTuri !== 'tayyor' && !o.olchov ? " Yakuniy narx o'lchovdan keyin aniqlanadi." : ''}</p>
     <table class="keep" style="width:100%;margin-top:30px;font-size:11.5px"><tr>
       <td>Sotuvchi: ______________________</td><td style="text-align:right">Mijoz: ______________________</td></tr></table>
@@ -133,7 +136,7 @@ function stageTimes(o, ctx) {
   return at;
 }
 
-export async function downloadFinalPdf(o, S, ctx) {
+export async function downloadFinalPdf(o, S, ctx, opts = {}) {
   toast('Yakuniy PDF tayyorlanmoqda…');
   const st = { kalk: S.settings.kalk, xom: S.settings.xom };
   const nomi = K.current('Sozlamalar!C13', st) || '';
@@ -176,6 +179,7 @@ export async function downloadFinalPdf(o, S, ctx) {
         <tr><td style="${td()}">Haqiqiy yakunlangan</td><td style="${td('font-weight:700')}">${dstr(at.yakunlandi)}</td></tr>
         <tr><td style="${td()}">Jami ketgan vaqt (murojaatdan)</td><td style="${td('font-weight:700')}">${dur(total)}</td></tr>
         <tr><td style="${td()}">Usta ishi (qabul qilgandan)</td><td style="${td('font-weight:700')}">${dur(work)}</td></tr>
+        ${opts.kech ? `<tr><td style="${td('color:#C8372D')}">Kechikish chegirmasi (mijozga)</td><td style="${td('font-weight:700;color:#C8372D')}">${opts.kech.kun} kun × ${opts.kech.k}% = ${opts.kech.foiz}%</td></tr>` : ''}
       </table>
     </div>
     <div style="font-weight:700;color:#00297D;margin:8px 0 6px;font-size:13px">Bosqichlar</div>

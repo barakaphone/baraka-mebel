@@ -279,6 +279,25 @@ await env.withSecurityRulesDisabled(c => updateDoc(doc(c.firestore(), 'orders', 
 await no('sotuvchi boshqa sanani qo\'ya olmaydi', updateDoc(doc(as(P.sot), 'orders', 'n-pr'), { muddat: '2030-03-01', muddatTarix: [{}], muddatTasdiq: { holat: 'rad' } }));
 await ok('sotuvchi: mijoz rozi emas — eski sana qaytadi', updateDoc(doc(as(P.sot), 'orders', 'n-pr'), { muddat: '2030-01-10', muddatTarix: [{}], muddatTasdiq: { holat: 'rad' } }));
 
+// --- Ochiq ish: usta biriktirilmaydi, birinchi olgan usta bajaradi
+await seed();
+await env.withSecurityRulesDisabled(async c => {
+  const db = c.firestore();
+  await setDoc(doc(db, 'orders', 'p1'), { no: 30, branchId: 'b1', sellerId: P.sot, stage: 'ustaga', tolovTuri: 'naqd', mebelTuri: 'yigiladigan', ustaId: '', log: [] });
+  await setDoc(doc(db, 'orders', 'p1', 'usta', 't_' + P.usta), { haqi: 500 });
+  await setDoc(doc(db, 'orders', 'p1', 'usta', 't_' + P.usta2), { haqi: 700 });
+});
+await ok('usta ochiq ishni ko\'radi', getDocs(query(collection(as(P.usta), 'orders'), where('stage', '==', 'ustaga'))));
+await ok('usta o\'z taklif haqini ko\'radi', getDoc(doc(as(P.usta), 'orders', 'p1', 'usta', 't_' + P.usta)));
+await no('usta boshqa ustaning haqini ko\'rmaydi', getDoc(doc(as(P.usta), 'orders', 'p1', 'usta', 't_' + P.usta2)));
+await no('usta o\'z foizini ko\'rmaydi (ochiq ish uchun ham)', getDoc(doc(as(P.usta), 'ustaFoiz', P.usta)));
+await no('usta haqini oshirib yozolmaydi', (() => { const db = as(P.usta); const b = writeBatch(db); b.update(doc(db, 'orders', 'p1'), { stage: 'usta_narx', ustaId: P.usta, ustaName: 'U' }); b.set(doc(db, 'orders', 'p1', 'usta', 'main'), { ustaId: P.usta, haqi: 9999 }); return b.commit(); })());
+await ok('usta ishni oladi', (() => { const db = as(P.usta); const b = writeBatch(db); b.update(doc(db, 'orders', 'p1'), { stage: 'usta_narx', ustaId: P.usta, ustaName: 'U' }); b.set(doc(db, 'orders', 'p1', 'usta', 'main'), { ustaId: P.usta, haqi: 500 }); return b.commit(); })());
+await no('ikkinchi usta olingan ishni ololmaydi', updateDoc(doc(as(P.usta2), 'orders', 'p1'), { stage: 'usta_narx', ustaId: P.usta2, ustaName: 'U2' }));
+await ok('rahbar ishni ustalar ro\'yxatiga qaytaradi', updateDoc(doc(as(P.rahbar), 'orders', 'p1'), { stage: 'ustaga', ustaId: '', ustaName: '' }));
+await ok('sotuvchi ustalar taklifini yozadi', setDoc(doc(as(P.sot), 'orders', 'p1', 'usta', 't_' + P.usta), { haqi: 600 }));
+await no('usta o\'z taklifini o\'zgartira olmaydi', setDoc(doc(as(P.usta), 'orders', 'p1', 'usta', 't_' + P.usta), { haqi: 9000 }));
+
 // --- Admin
 await seed();
 const ad = as(P.admin);

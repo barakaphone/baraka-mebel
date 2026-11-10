@@ -22,16 +22,18 @@ function range() {
 }
 
 // Bitta buyurtma qatori. Tannarx: hisobdagi tan narx, usta haqi — haqiqatda biriktirilgan ustaniki.
-function rowOf(o, p) {
+function rowOf(o, p, ctx) {
   const r = p.result || {}, t = r.tanlangan || {};
   const plan = (p.ustaBaza || 0) * (p.planFoiz || 0);
   const actual = p.ustaHaqi != null ? p.ustaHaqi : plan;
   const tan = (r.tan || 0) - plan + actual;
   const muddatli = (t.oy || 0) > 0;
-  const sotuv = muddatli ? (t.jami || 0) : (r.naqd || 0);
+  // Usta kechiksa — mijozga berilgan kechikish chegirmasi sotilgan summadan ayiriladi
+  const kech = ctx.kechikChegirma(o, p);
+  const sotuv = (muddatli ? (t.jami || 0) : (r.naqd || 0)) - (kech?.summa || 0);
   return {
     o, name: o.client?.name || '', xarid: [...new Set((r.lines || []).map(l => l.mahsulot))].join(', '),
-    tolov: muddatli ? t.turi : 'Naqd', tan, cheg: r.chegirma || 0, chegFoiz: r.chegFoiz || 0, sotuv,
+    tolov: muddatli ? t.turi : 'Naqd', tan, cheg: (r.chegirma || 0) + (kech?.summa || 0), kech, chegFoiz: r.chegFoiz || 0, sotuv,
     foyda: sotuv - tan, savdo: (r.naqd || 0) - tan, ustamaF: muddatli ? (t.jami || 0) - (r.naqd || 0) : 0,
   };
 }
@@ -51,8 +53,8 @@ export async function renderReport(page, ctx) {
     all.sort((x, y) => y.formalAt - x.formalAt);
     // O'chirilganlar hisobotga va jami summalarga kirmaydi, pastdagi alohida bo'limda turadi
     const list = all.filter(o => !o.reportHidden), hidden = all.filter(o => o.reportHidden);
-    const rows = list.map(o => rowOf(o, pul.get(o.id)));
-    const hrows = hidden.map(o => rowOf(o, pul.get(o.id)));
+    const rows = list.map(o => rowOf(o, pul.get(o.id), ctx));
+    const hrows = hidden.map(o => rowOf(o, pul.get(o.id), ctx));
     const sum = k => rows.reduce((s, r) => s + r[k], 0);
     page.innerHTML = `<h2>Hisobot</h2>
       <div class="toolbar">
@@ -70,7 +72,7 @@ export async function renderReport(page, ctx) {
       </div>
       <div class="tbl-wrap"><table class="tbl wide"><thead><tr><th>Mijoz F.I.O.</th><th>Xarid</th><th>Holati</th><th>To'lov</th><th class="r">Mebel qanchaga tushdi</th><th class="r">Chegirma</th><th class="r">Sotilgan summa</th><th class="r">Foyda</th><th></th></tr></thead><tbody>
         ${rows.map((r, i) => `<tr data-i="${i}" style="cursor:pointer"><td><b>${esc(r.name)}</b><div class="hint">№${r.o.no}</div></td><td class="xarid">${esc(r.xarid)}</td><td>${esc(ctx.STAGES[r.o.stage]?.t || r.o.stage)}</td><td>${esc(r.tolov)}</td>
-          <td class="r">${uzs(r.tan)}</td><td class="r">${r.cheg ? `${uzs(r.cheg)}<div class="hint">${pct(r.chegFoiz)}</div>` : '—'}</td><td class="r">${uzs(r.sotuv)}</td>
+          <td class="r">${uzs(r.tan)}</td><td class="r">${r.cheg ? `${uzs(r.cheg)}<div class="hint">${pct(r.chegFoiz)}${r.kech ? `<br>⏰ kechikish ${r.kech.foiz}%` : ''}</div>` : '—'}</td><td class="r">${uzs(r.sotuv)}</td>
           <td class="r" style="font-weight:700;color:${r.foyda < 0 ? 'var(--bad)' : 'var(--ok)'}">${uzs(r.foyda)}</td>
           <td><button class="btn sec sm" data-hide="${r.o.id}" title="Hisobotdan o'chirish">🗑</button></td></tr>`).join('') || '<tr><td colspan="9" class="empty">Bu davrda rasmiylashtirilgan buyurtma yo\'q</td></tr>'}
         ${rows.length ? `<tr style="background:var(--surface2);font-weight:700"><td colspan="4">JAMI</td><td class="r">${uzs(sum('tan'))}</td><td class="r">${uzs(sum('cheg'))}</td><td class="r">${uzs(sum('sotuv'))}</td>
