@@ -40,7 +40,7 @@ service cloud.firestore {
         'rahbar': {'ord_all': true, 'calc': true, 'see_cost': true, 'pdf': true, 'assign_usta': true, 'kirim': true, 'xom_narx': true,
                    'add_usta': true, 'see_usta_foiz': true, 'staff_view': true, 'final_pdf': true},
         'sotuvchi': {'ord_branch': true, 'ord_create': true, 'ord_edit': true, 'ord_cancel': true, 'calc': true,
-                     'discount': true, 'pdf': true, 'pasport_view': true, 'pasport_upload': true},
+                     'discount': true, 'pdf': true, 'pasport_view': true, 'pasport_upload': true, 'nomidan': true},
         'shartnomachi': {'skoring': true, 'pasport_view': true},
         'olchovchi': {'olchov': true},
         'usta': {'work': true}
@@ -75,7 +75,14 @@ service cloud.firestore {
                                               || (hp(p, pm, own, 'calc') && rahbarNarx(o, n, ch))))
         || (hp(p, pm, own, 'kirim') && kirimUpd(o, n, ch))
         || (hp(p, pm, own, 'work') && ((o.ustaId == uid() && (ustaUpd(o, n, ch) || muddatUpd(o, n, ch))) || ustaOl(o, n, ch)))
-        || (hp(p, pm, own, 'report') && ch.hasOnly(['reportHidden']));
+        || (hp(p, pm, own, 'report') && ch.hasOnly(['reportHidden']))
+        || (hp(p, pm, own, 'nomidan') && (hp(p, pm, own, 'ord_all') || o.branchId == p.branchId) && nomidanUpd(o, n, ch));
+    }
+    // "Nomidan" ruxsati: o'z filialidagi buyurtmada har bir bosqichni xodim nomidan bajaradi (admin kabi),
+    // lekin buyurtma raqami, filiali va sotuvchisi o'zgarmaydi; usta faqat ustalar ro'yxatidan
+    function nomidanUpd(o, n, ch) {
+      return n.branchId == o.branchId && !ch.hasAny(['no', 'branchId', 'sellerId', 'createdAt', 'reportHidden'])
+        && (!ch.hasAny(['ustaId']) || n.ustaId == '' || workRole(get(/databases/$(database)/documents/profiles/$(n.ustaId)).data));
     }
     function workerOnly(ch, keys) { return ch.hasOnly(keys.concat(['stage', 'updatedAt', 'log', 'stageAt', 'stageBy'])); }
     function move(o, n, a, b)     { return o.stage == a && n.stage == b; }
@@ -252,12 +259,14 @@ service cloud.firestore {
         }
         function pulCreate(p, pm, own, n) {
           return p.role == 'admin'
+            || (hp(p, pm, own, 'nomidan') && (hp(p, pm, own, 'ord_all') || n.branchId == p.branchId) && ordAfter().branchId == n.branchId)
             || (hp(p, pm, own, 'ord_edit') && (hp(p, pm, own, 'ord_all') || n.branchId == p.branchId)
                 && ordAfter().branchId == n.branchId
                 && ordAfter().stage == 'murojaat' && !('skoring' in n) && !('ustaHaqi' in n));
         }
         function pulUpdate(p, pm, own, d, n) {
           return p.role == 'admin'
+            || (hp(p, pm, own, 'nomidan') && (hp(p, pm, own, 'ord_all') || d.branchId == p.branchId) && n.branchId == d.branchId)
             || (hp(p, pm, own, 'ord_edit') && (hp(p, pm, own, 'ord_all') || d.branchId == p.branchId)
                 && n.branchId == d.branchId && ordAfter().stage in preStages()
                 && n.get('skoring', null) == d.get('skoring', null) && n.get('kirim', null) == d.get('kirim', null) && sameUsta())
@@ -284,7 +293,8 @@ service cloud.firestore {
       allow read: if isStaff() && (me().role == 'admin' || uPerm('see_usta_foiz') || uPerm('assign_usta') || uPerm('report')
                                    || get(orderPath(oid)).data.ustaId == uid()
                                    || x == 't_' + uid());
-      allow write: if x == 'main' && isStaff() && (me().role == 'admin' || uPerm('assign_usta'))
+      allow write: if x == 'main' && isStaff() && (me().role == 'admin' || uPerm('assign_usta')
+                                                   || (uPerm('nomidan') && (uPerm('ord_all') || get(orderPath(oid)).data.branchId == me().branchId)))
                    && request.resource.data.keys().hasOnly(['ustaId', 'haqi']);
       // Usta ochiq ishni olayotganda o'z haqini yozadi — faqat unga taklif qilingan summa
       allow create, update: if x == 'main' && isStaff() && uPerm('work')
@@ -315,6 +325,7 @@ service cloud.firestore {
       }
       function phCreate(p, pm, own, n) {
         return p.role == 'admin'
+          || (hp(p, pm, own, 'nomidan') && (hp(p, pm, own, 'ord_all') || n.branchId == p.branchId))
           || (n.kind == 'pasport' && hp(p, pm, own, 'pasport_upload')
               && (hp(p, pm, own, 'ord_all') || n.branchId == p.branchId)
               && n.side in ['oldi', 'orqa'] && ordOf(n.orderId).stage in ['murojaat', 'skoring'])

@@ -295,7 +295,18 @@ export async function loadStatic() {
 async function migrate() {
   try {
     const m = await getDoc(doc(db, 'meta', 'migr'));
-    if (m.exists() && m.data().v >= 2) return;
+    if (m.exists() && m.data().v >= 3) return;
+    // 3-versiya: saqlangan rollar hujjatida sotuvchiga "nomidan" ruxsati (yangi ruxsat)
+    if (m.exists() && m.data().v === 2) {
+      const b3 = writeBatch(db);
+      const r = S.rolesRaw || {};
+      if (r.sotuvchi && r.sotuvchi.perms && r.sotuvchi.perms.nomidan === undefined)
+        b3.set(doc(db, 'settings', 'roles'), { roles: { sotuvchi: { ...r.sotuvchi, perms: { ...r.sotuvchi.perms, nomidan: true } } } }, { merge: true });
+      b3.set(doc(db, 'meta', 'migr'), { v: 3, at: Date.now() });
+      await b3.commit();
+      await loadStatic();
+      return;
+    }
     const b = writeBatch(db);
     let n = 0;
     for (const p of S.staff) if (p.ustaFoiz !== undefined) {
@@ -311,7 +322,7 @@ async function migrate() {
       }
       if (n > 400) break;
     }
-    b.set(doc(db, 'meta', 'migr'), { v: 2, at: Date.now() });
+    b.set(doc(db, 'meta', 'migr'), { v: 3, at: Date.now() });
     await b.commit();
     if (n) await loadStatic();
   } catch (e) { console.warn('migratsiya', e); }
@@ -795,6 +806,7 @@ function ishHtml(o) {
   </div>`;
 }
 
+const nomidanOk = o => !isAdmin() && can('nomidan') && (can('ord_all') || o.branchId === S.me.branchId);
 const canRahbarPrice = () => isAdmin() || (can('assign_usta') && can('calc'));
 const sellerOk = o => isAdmin() || (can('ord_edit') && (can('ord_all') || o.branchId === S.me.branchId));
 const pdfReady = (o, pul) => (isAdmin() || can('pdf')) && pul?.result && o.stage !== 'bekor' && pul.skoring?.qaror !== 'bekor';
@@ -850,7 +862,7 @@ function orderHtml(o, pul) {
     ${workerOnly || can('assign_usta') || isAdmin() ? ishHtml(o) : ''}
     ${showPas ? `<div class="card"><h3>Pasport</h3>${pasEdit ? '<div class="pp" id="ppUp"></div>' : '<div class="pp" id="ph-pasport"><span class="muted">Yuklanmoqda…</span></div>'}</div>` : ''}
     ${o.stage === 'yakunlandi' ? `<div class="card"><h3>Yetkazib berish rasmlari</h3><div class="photos" id="ph-yetkazish"></div></div>` : ''}
-    ${isAdmin() ? `<div class="card"><h3>Admin</h3>
+    ${isAdmin() || nomidanOk(o) ? `<div class="card"><h3>${isAdmin() ? 'Admin' : 'Jarayonni boshqarish'}</h3>
       <div class="row2"><select class="inp" id="admStage">${Object.keys(STAGES).map(s => `<option value="${s}" ${s === o.stage ? 'selected' : ''}>${esc(STAGES[s].t)}</option>`).join('')}</select><button class="btn sec" id="admStageBtn">Bosqichni o'zgartirish</button></div>
       <p class="hint">Faqat xatoni tuzatish uchun. Har bir o'zgarish tarixga yoziladi.</p></div>` : ''}
     ${!workerOnly ? `<div class="card"><h3>Tarix</h3><ul class="log">${(o.log || []).slice().reverse().map(l => `<li>${esc(l.m)}<div class="t">${esc(l.n)}, ${fdt(l.t)}</div></li>`).join('')}</ul></div>` : ''}`;
@@ -860,7 +872,8 @@ const photoCounter = (id, n) => `<div class="hint" id="${id}" style="margin:6px 
 
 // Har bir rol uchun shu bosqichdagi asosiy amallar
 function actionsHtml(o, pul) {
-  const me = S.me.id, adm = isAdmin();
+  // Admin yoki "nomidan" ruxsati bor xodim (o'z filialida) har bir bosqichni xodim nomidan bajaradi
+  const me = S.me.id, adm = isAdmin() || nomidanOk(o);
   const st = o.stage;
   const pdfBtns = [
     pdfReady(o, pul) ? (pul.variants && Object.keys(pul.variants).length > 1
@@ -931,7 +944,7 @@ function actionsHtml(o, pul) {
   }
   // Admin / rahbar: mahsulotni kirim qilish
   if (st === 'kirim') {
-    if (adm || can('kirim')) blocks.push(`<h3 style="margin-top:0">Mahsulotni kirim qilish</h3>
+    if (isAdmin() || can('kirim')) blocks.push(`<h3 style="margin-top:0">Mahsulotni kirim qilish</h3>
       <div class="row2"><div class="field"><label>Summa, so'm *</label><input class="inp" id="kSum" inputmode="numeric" data-money></div>
         <div class="field"><label>Hujjat (nakladnoy) raqami *</label><input class="inp" id="kDoc" maxlength="60"></div></div>
       <div class="field"><label>Rasmlar (nakladnoy, mahsulot)</label><div id="kUp" class="media"></div></div>
@@ -1245,7 +1258,7 @@ function bindOrder(page, o, pul) {
     const s = $('#admStage').value;
     if (s === o.stage) return;
     if (!await confirmBox(`Bosqichni "${STAGES[s].t}" ga o'zgartirasizmi?`, "O'zgartirish")) return;
-    try { await upd({ stage: s }, `Admin bosqichni o'zgartirdi: ${STAGES[o.stage]?.t} → ${STAGES[s].t}`); } catch (e) { toast(errText(e), true); }
+    try { await upd({ stage: s }, `${isAdmin() ? 'Admin' : S.me.fullName || ''} bosqichni o'zgartirdi: ${STAGES[o.stage]?.t} → ${STAGES[s].t}`); } catch (e) { toast(errText(e), true); }
   });
   on('muddat', () => {
     const m = modal(`<h2>Muddatni o'zgartirish</h2><p class="muted">Hozirgi muddat: <b>${esc(dmy(o.muddat))}</b></p>
@@ -1640,7 +1653,7 @@ $('#setupForm').addEventListener('submit', async ev => {
     const b2 = writeBatch(db);
     b2.set(branchRef, { name: branch || 'Asosiy filial', address: '', phone: '', viloyat: '', tuman: '', active: true, createdAt: serverTimestamp() });
     b2.set(doc(db, 'settings', 'main'), DEF_MAIN);
-    b2.set(doc(db, 'meta', 'migr'), { v: 2, at: Date.now() });
+    b2.set(doc(db, 'meta', 'migr'), { v: 3, at: Date.now() });
     await b2.commit();
     setupRunning = false;
     location.reload();

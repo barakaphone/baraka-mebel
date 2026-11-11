@@ -25,6 +25,7 @@ export const PERM_GROUPS = [
     ['assign_usta', 'Ustaga biriktirish'],
     ['kirim', 'Mahsulotni kirim qilish'],
     ['work', 'Ish bosqichlari (usta ishi)'],
+    ['nomidan', "Barcha bosqichlarni xodim nomidan bajarish (shartnomachi, o'lchovchi, usta) — o'z filialida"],
   ] },
   { t: 'Boshqaruv', perms: [
     ['xom_narx', 'Xom ashyo narxlari'],
@@ -44,7 +45,7 @@ const on = list => Object.fromEntries(list.map(k => [k, true]));
 export const DEFAULT_ROLES = {
   admin: { name: 'Admin', builtin: true, perms: on(ALL_PERMS.filter(k => k !== 'see_usta_foiz')) },
   rahbar: { name: 'Mebel rahbari', builtin: true, perms: on(['ord_all', 'calc', 'see_cost', 'pdf', 'assign_usta', 'kirim', 'xom_narx', 'add_usta', 'see_usta_foiz', 'staff_view', 'final_pdf']) },
-  sotuvchi: { name: 'Sotuvchi', builtin: true, perms: on(['ord_branch', 'ord_create', 'ord_edit', 'ord_cancel', 'calc', 'discount', 'pdf', 'pasport_view', 'pasport_upload']) },
+  sotuvchi: { name: 'Sotuvchi', builtin: true, perms: on(['ord_branch', 'ord_create', 'ord_edit', 'ord_cancel', 'calc', 'discount', 'pdf', 'pasport_view', 'pasport_upload', 'nomidan']) },
   shartnomachi: { name: 'Shartnomachi', builtin: true, perms: on(['skoring', 'pasport_view']) },
   olchovchi: { name: "O'lchovchi", builtin: true, perms: on(['olchov']) },
   usta: { name: 'Usta', builtin: true, perms: on(['work']) },

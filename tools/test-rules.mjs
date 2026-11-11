@@ -18,6 +18,7 @@ const no = (n, p) => t(n, assertFails(p));
 
 const P = { admin: 'u-admin', rahbar: 'u-rahbar', sot: 'u-sot', sot2: 'u-sot2', shart: 'u-shart', olch: 'u-olch', usta: 'u-usta', usta2: 'u-usta2', old: 'u-old', stranger: 'u-x', admin2: 'u-admin2', kassir: 'u-kassir', del: 'u-del' };
 const IMG = 'data:image/jpeg;base64,AAAA';
+const SOT_PERMS = { ord_branch: true, ord_create: true, ord_edit: true, ord_cancel: true, calc: true, discount: true, pdf: true, pasport_view: true, pasport_upload: true };
 async function seed() {
   await env.clearFirestore();
   await env.withSecurityRulesDisabled(async c => {
@@ -39,6 +40,7 @@ async function seed() {
     await prof(P.del, 'sotuvchi', { branchId: 'b1', deleted: true });
     await setDoc(doc(db, 'branches', 'b1'), { name: 'Filial 1' });
     await setDoc(doc(db, 'settings', 'main'), { kategoriyalar: ['A'] });
+    await setDoc(doc(db, 'settings', 'roles'), { roles: { sotuvchi: { name: 'Sotuvchi', perms: SOT_PERMS } } });
     await setDoc(doc(db, 'meta', 'counter'), { n: 5 });
     const order = (id, data) => setDoc(doc(db, 'orders', id), {
       no: 1, branchId: 'b1', sellerId: P.sot, stage: 'murojaat', tolovTuri: '', mebelTuri: 'yigiladigan',
@@ -297,6 +299,19 @@ await no('ikkinchi usta olingan ishni ololmaydi', updateDoc(doc(as(P.usta2), 'or
 await ok('rahbar ishni ustalar ro\'yxatiga qaytaradi', updateDoc(doc(as(P.rahbar), 'orders', 'p1'), { stage: 'ustaga', ustaId: '', ustaName: '' }));
 await ok('sotuvchi ustalar taklifini yozadi', setDoc(doc(as(P.sot), 'orders', 'p1', 'usta', 't_' + P.usta), { haqi: 600 }));
 await no('usta o\'z taklifini o\'zgartira olmaydi', setDoc(doc(as(P.usta), 'orders', 'p1', 'usta', 't_' + P.usta), { haqi: 9000 }));
+
+// --- "Nomidan" ruxsati: sotuvchi o'z filialida barcha bosqichlarni xodim nomidan bajaradi
+await seed();
+await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'settings', 'roles'), { roles: { sotuvchi: { name: 'Sotuvchi', perms: { ...SOT_PERMS, nomidan: true } } } }));
+await ok('nomidan: sotuvchi skoring qarorini yozadi', (() => { const db = as(P.sot); const b = writeBatch(db); b.update(doc(db, 'orders', 'o-sk', 'pul', 'main'), { skoring: { limit: 1000, qaror: 'tasdiq', by: P.sot } }); b.update(doc(db, 'orders', 'o-sk'), { stage: 'olchov' }); return b.commit(); })());
+await ok('nomidan: sotuvchi o\'lchovni kiritadi', updateDoc(doc(as(P.sot), 'orders', 'o-ol'), { stage: 'ustaga', olchov: { izoh: 'x', u: P.olch } }));
+await ok('nomidan: sotuvchi o\'lchov rasmini yuklaydi', setDoc(doc(as(P.sot), 'photos', 'nm1'), { orderId: 'o-ol', branchId: 'b1', kind: 'olchov', side: '', data: IMG, createdBy: P.sot }));
+await ok('nomidan: sotuvchi usta nomidan ishni qabul qiladi', updateDoc(doc(as(P.sot), 'orders', 'o-us'), { stage: 'kesish', muddat: '2030-01-01' }));
+await ok('nomidan: sotuvchi ustani belgilaydi', updateDoc(doc(as(P.sot), 'orders', 'o-ug'), { stage: 'usta_tasdiq', ustaId: P.usta, ustaName: 'U' }));
+await no('nomidan: usta bo\'lmagan xodimni usta qilib bo\'lmaydi', updateDoc(doc(as(P.sot), 'orders', 'o-new'), { ustaId: P.olch }));
+await no('nomidan: filialni o\'zgartirib bo\'lmaydi', updateDoc(doc(as(P.sot), 'orders', 'o-new'), { branchId: 'b2' }));
+await no('nomidan: boshqa filial buyurtmasiga tegib bo\'lmaydi', updateDoc(doc(as(P.sot2), 'orders', 'o-new'), { stage: 'yakunlandi' }));
+await no('nomidan: hisobotdan o\'chira olmaydi', updateDoc(doc(as(P.sot), 'orders', 'o-new'), { reportHidden: { by: P.sot } }));
 
 // --- Admin
 await seed();
